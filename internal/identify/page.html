@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Identify this device</title>
 <style>
-:root{--bg:#1a1b26;--card:#1f2335;--text:#c0caf5;--muted:#7a84b3;--accent:#7aa2f7;--ok:#9ece6a;--bad:#f7768e;--warn:#e0af68;
+:root{--bg:#1a1b26;--card:#1f2335;--field:#2f334d;--text:#c0caf5;--muted:#7a84b3;--accent:#7aa2f7;--on-accent:#16161e;--ok:#9ece6a;--bad:#f7768e;--warn:#e0af68;
   --mono:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace}
-@media (prefers-color-scheme:light){:root{--bg:#e1e2e7;--card:#eceef5;--text:#343b58;--muted:#707aa3;--accent:#2e7de9;--ok:#587539;--bad:#d6244f;--warn:#8c6c3e}}
+@media (prefers-color-scheme:light){:root{--bg:#e1e2e7;--card:#eceef5;--field:#d3d6e6;--text:#343b58;--muted:#707aa3;--accent:#2e7de9;--on-accent:#ffffff;--ok:#587539;--bad:#d6244f;--warn:#8c6c3e}}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg);color:var(--text);font:15px/1.6 var(--mono)}
 main{width:100%;max-width:440px;background:var(--card);border-radius:18px;padding:28px 24px;text-align:center}
@@ -18,6 +18,13 @@ h1:before{content:"> ";color:var(--muted)}
 .label{margin:14px 0 4px;font-size:18px;font-weight:700;word-break:break-word}
 .muted{color:var(--muted);font-size:13px}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.proxy{margin-top:22px;padding-top:18px;border-top:1px solid var(--field);text-align:left}
+.pstatus{font-weight:700;text-align:center}
+#pacbox{margin-top:12px}
+#pacaddr{width:100%;margin:8px 0;padding:10px 12px;border:0;border-radius:10px;background:var(--field);color:var(--text);font:inherit;font-size:13px}
+button{width:100%;padding:12px;border:0;border-radius:12px;background:var(--accent);color:var(--on-accent);font:inherit;font-weight:700;font-size:15px;cursor:pointer}
+button:active{filter:brightness(.92)}
+.steps{margin-top:10px}
 </style>
 </head>
 <body>
@@ -28,14 +35,58 @@ h1:before{content:"> ";color:var(--muted)}
   <div id="msg">Reading your device...</div>
   <div class="label" id="label"></div>
   <div class="muted" id="hint"></div>
+
+  <div class="proxy" id="proxy" hidden>
+    <div class="pstatus" id="pstatus"></div>
+    <div id="pacbox" hidden>
+      <div class="muted">Proxy address. Paste it into this phone's Wi-Fi settings:</div>
+      <input id="pacaddr" type="text" readonly>
+      <button id="copyPac" type="button">Copy proxy address</button>
+      <div class="muted steps" id="copied"></div>
+      <div class="muted steps">iPhone: Settings &gt; Wi-Fi &gt; (i) &gt; Configure Proxy &gt; Automatic<br>Android: Wi-Fi &gt; network &gt; Advanced &gt; Proxy &gt; Proxy Auto-Config<br>If you already set it, you can ignore this.</div>
+    </div>
+  </div>
 </main>
 <script>
 (async () => {
   const $ = id => document.getElementById(id);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   const show = (icon, cls, msg, label, hint) => {
     $('icon').textContent = icon; $('icon').className = 'big ' + cls;
     $('msg').textContent = msg; $('label').textContent = label || ''; $('hint').textContent = hint || '';
   };
+
+  // Is this phone sending its HTTPS traffic through the proxy? The page you are on is a LAN address,
+  // which the proxy setup sends direct, so it proves nothing. Instead ask for a made-up name: only a
+  // phone that uses the proxy can get that request to the PC, and the PC then tells us it saw it.
+  async function proxyCheck() {
+    $('proxy').hidden = false;
+    $('pstatus').textContent = 'Checking whether this phone uses the proxy...';
+    let s = null;
+    try {
+      try { await fetch('https://{{PROBE_HOST}}/', { mode: 'no-cors', cache: 'no-store' }); } catch (e) { /* expected: the name does not exist */ }
+      await sleep(300);
+      const r = await fetch('/identify/status', { cache: 'no-store' });
+      if (r.ok) s = await r.json();
+    } catch (e) { /* could not check: the address is offered anyway */ }
+
+    if (s && s.checked && s.usingProxy) {
+      $('pstatus').textContent = '✓ This phone is using the proxy.';
+      $('pstatus').className = 'pstatus ok';
+      return;
+    }
+    $('pstatus').textContent = s && s.checked ? 'This phone does not seem to use the proxy yet.' : 'Could not check whether this phone uses the proxy.';
+    $('pstatus').className = 'pstatus warn';
+    if (s && s.pac) { $('pacbox').hidden = false; $('pacaddr').value = s.pac; }
+  }
+
+  $('copyPac').addEventListener('click', async () => {
+    const text = $('pacaddr').value;
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { $('pacaddr').select(); $('pacaddr').setSelectionRange(0, text.length); document.execCommand('copy'); }
+    $('copied').textContent = 'Copied. Now paste it in the Wi-Fi proxy setting.';
+  });
+
   try {
     const info = {
       userAgent: navigator.userAgent,
@@ -55,13 +106,14 @@ h1:before{content:"> ";color:var(--muted)}
     const out = await r.json();
 
     if (out.model) {
-      show('✓', 'ok', 'Done. The PC now knows this device.', out.label, 'You can close this tab.');
-      setTimeout(() => { try { window.close(); } catch (e) {} }, 1500);
+      show('✓', 'ok', 'Done. The PC now knows this device.', out.label, '');
     } else if (!uad) {
-      show('!', 'warn', "This browser doesn't share the exact model (Safari and Firefox keep it private).", out.label, 'Open this page in Chrome for the model, or just name the device in the dashboard. You can close this tab.');
+      show('!', 'warn', "This browser doesn't share the exact model (Safari and Firefox keep it private).", out.label, 'Open this page in Chrome for the model, or just name the device in the dashboard.');
     } else {
-      show('!', 'warn', 'The browser did not give a model name.', out.label, 'You can name the device in the dashboard. You can close this tab.');
+      show('!', 'warn', 'The browser did not give a model name.', out.label, 'You can name the device in the dashboard.');
     }
+    await proxyCheck();
+    $('hint').textContent = ($('hint').textContent + ' You can close this tab when you are done.').trim();
   } catch (e) {
     show('×', 'bad', 'Could not report to the PC.', String(e && e.message || e), 'Check that you are on the same Wi-Fi as the PC.');
   }

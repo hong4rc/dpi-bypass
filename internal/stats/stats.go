@@ -69,7 +69,8 @@ type Store struct {
 	mu      sync.Mutex
 	totals  Totals
 	nextID  uint64
-	open    map[uint64]string // id -> client, for connections still open
+	open    map[uint64]string    // id -> client, for connections still open
+	probes  map[string]time.Time // client -> when its "am I using the proxy?" probe last arrived
 	events  []Event
 	devices map[string]*Device
 	saved   map[string]*savedDevice // by IP: name and identities, kept in devices.json
@@ -78,7 +79,7 @@ type Store struct {
 
 // New loads saved device names and identities from path (devices.json); "" keeps them in memory only.
 func New(path string) *Store {
-	s := &Store{devices: map[string]*Device{}, saved: map[string]*savedDevice{}, open: map[uint64]string{}, path: path}
+	s := &Store{devices: map[string]*Device{}, saved: map[string]*savedDevice{}, open: map[uint64]string{}, probes: map[string]time.Time{}, path: path}
 	s.load(path)
 	return s
 }
@@ -321,4 +322,20 @@ func (s *Store) SetName(ip, name string) error {
 		delete(s.saved, ip)
 	}
 	return s.persist()
+}
+
+// SeenProbe records that client's proxy check (a CONNECT to the probe name)
+// just reached the proxy: only a client that uses the proxy can do that.
+func (s *Store) SeenProbe(client string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.probes[client] = time.Now()
+}
+
+// ProbeSeen reports whether client's probe arrived within the last d.
+func (s *Store) ProbeSeen(client string, within time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at, ok := s.probes[client]
+	return ok && time.Since(at) <= within
 }

@@ -35,15 +35,40 @@ const maxBody = 16 << 10
 // ReportFunc receives a device's report; client is the connection's RemoteAddr.
 type ReportFunc func(client string, id stats.Identity) error
 
-// New serves GET /identify (the page) and POST /identify/report.
-func New(report ReportFunc) http.Handler {
+// ProbeHost is a made-up name the page requests to find out whether the phone
+// sends its HTTPS traffic through the proxy. The proxy recognises the name and
+// reports who asked: only a phone that uses the proxy can get a request for it there.
+const ProbeHost = "probe.dpi-bypass.invalid"
+
+// StatusFunc tells whether client is using the proxy, and the proxy setup address
+// to give it. host is the address the client used to reach this page.
+type StatusFunc func(client, host string) (usingProxy bool, pac string)
+
+// New serves GET /identify (the page), POST /identify/report and GET /identify/status.
+// status may be nil: the page then can not tell whether the phone uses the proxy.
+func New(report ReportFunc, status StatusFunc) http.Handler {
+	page := []byte(strings.ReplaceAll(string(pageHTML), "{{PROBE_HOST}}", ProbeHost))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /identify", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Write(pageHTML)
+		w.Write(page)
 	})
 	mux.HandleFunc("POST /identify/report", func(w http.ResponseWriter, r *http.Request) { handleReport(w, r, report) })
+	mux.HandleFunc("GET /identify/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		out := map[string]any{"checked": status != nil}
+		if status != nil {
+			host, _, err := net.SplitHostPort(r.Host)
+			if err != nil {
+				host = r.Host
+			}
+			using, pac := status(r.RemoteAddr, host)
+			out["usingProxy"], out["pac"] = using, pac
+		}
+		json.NewEncoder(w).Encode(out)
+	})
 	return mux
 }
 

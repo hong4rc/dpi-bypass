@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"dpi/internal/identify"
 	"dpi/internal/logx"
@@ -203,7 +204,7 @@ func (a *App) startIdentify(ips []string, proxyPort string) {
 			ip := stats.ClientIP(client)
 			logx.Info.Printf("device %s identified itself: %s", ip, id.Describe())
 			return a.Stats.SetIdentity(ip, id)
-		}),
+		}, a.proxyStatus),
 	}
 	for _, ip := range ips {
 		raw, err := net.Listen("tcp", net.JoinHostPort(ip, port))
@@ -225,4 +226,25 @@ func (a *App) IdentifyURLs() []string {
 		urls = append(urls, "https://"+ln.Addr().String()+"/identify")
 	}
 	return urls
+}
+
+// proxyCheckWindow is how recent a phone's probe must be to count as "using the proxy".
+const proxyCheckWindow = 15 * time.Second
+
+// proxyStatus answers the identify page's question "is this phone using the proxy?",
+// and gives it the setup address for the PC address it reached us on.
+func (a *App) proxyStatus(client, host string) (usingProxy bool, pac string) {
+	return a.Stats.ProbeSeen(stats.ClientIP(client), proxyCheckWindow), a.pacFor(host)
+}
+
+// pacFor is the proxy setup address on the given PC address ("" if the PC is not sharing on it).
+func (a *App) pacFor(host string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, ln := range a.lan {
+		if h, _, err := net.SplitHostPort(ln.Addr().String()); err == nil && h == host {
+			return "http://" + ln.Addr().String() + "/proxy.pac"
+		}
+	}
+	return ""
 }

@@ -56,6 +56,12 @@ type Proxy struct {
 	// which usually reveals the device type (and often the model).
 	OnClient func(client, userAgent string)
 
+	// ProbeHost is a made-up name (never a real site). A CONNECT to it is not
+	// forwarded: it is reported to OnProbe, which is how a phone is proven to use the
+	// proxy. Empty disables the check.
+	ProbeHost string
+	OnProbe   func(client string)
+
 	// Fallback serves every path other than /proxy.pac (the dashboard).
 	Fallback http.Handler
 }
@@ -137,6 +143,15 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	logx.Debug.Printf("CONNECT %s from %s", r.Host, r.RemoteAddr)
 	p.noteClient(r)
+	if p.ProbeHost != "" && host == p.ProbeHost {
+		// "Is this client using the proxy?" check from the identify page: the name exists
+		// nowhere, so only a client that sends its HTTPS requests to the proxy can ever get here.
+		if p.OnProbe != nil {
+			p.OnProbe(r.RemoteAddr)
+		}
+		http.Error(w, "dpi-bypass proxy check", http.StatusForbidden)
+		return
+	}
 	up, err := net.DialTimeout("tcp", r.Host, dialTimeout)
 	if err != nil {
 		logx.Info.Printf("FAIL dial %s: %v", r.Host, err)

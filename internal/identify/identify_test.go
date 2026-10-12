@@ -26,12 +26,17 @@ type got struct {
 // start serves the identify handler over real TLS with a fresh self-signed
 // certificate, and returns a client that trusts exactly that certificate.
 func start(t *testing.T, report ReportFunc) (*httptest.Server, *http.Client) {
+	return startWith(t, report, nil)
+}
+
+// startWith is start with a proxy status function.
+func startWith(t *testing.T, report ReportFunc, status StatusFunc) (*httptest.Server, *http.Client) {
 	t.Helper()
 	cert, err := SelfSigned([]net.IP{net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewUnstartedServer(New(report))
+	srv := httptest.NewUnstartedServer(New(report, status))
 	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
@@ -160,7 +165,7 @@ func TestTLSListenerRejectsOldProtocols(t *testing.T) {
 	cert, _ := SelfSigned([]net.IP{net.ParseIP("127.0.0.1")})
 	raw, _ := net.Listen("tcp", "127.0.0.1:0")
 	ln := TLSListener(raw, cert)
-	go http.Serve(ln, New(func(string, stats.Identity) error { return nil }))
+	go http.Serve(ln, New(func(string, stats.Identity) error { return nil }, nil))
 	t.Cleanup(func() { ln.Close() })
 
 	old := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MaxVersion: tls.VersionTLS11}}}
@@ -204,7 +209,7 @@ func TestPersistentKeepsTheSameCertificateAcrossRestarts(t *testing.T) {
 	}
 
 	// and it still serves TLS after being read back from disk
-	srv := httptest.NewUnstartedServer(New(func(string, stats.Identity) error { return nil }))
+	srv := httptest.NewUnstartedServer(New(func(string, stats.Identity) error { return nil }, nil))
 	srv.TLS = &tls.Config{Certificates: []tls.Certificate{second}}
 	srv.StartTLS()
 	defer srv.Close()
