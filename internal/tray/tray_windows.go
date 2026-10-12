@@ -1,6 +1,8 @@
 // Package tray is the Windows system-tray icon. Quick, simple actions live in
-// its menu; things that need room to read or edit (devices, activity, live
-// logs, skip list, phone setup) live in the dashboard it opens.
+// its menu and never pop up notifications (the icon and checkmarks are the
+// feedback; only real failures notify). Things that need room to read or edit
+// (devices, activity, live logs, skip list, Steam test, phone setup) live in the
+// dashboard it opens.
 package tray
 
 import (
@@ -40,8 +42,7 @@ func build(a *app.App) {
 	mLAN := systray.AddMenuItemCheckbox("Share with other devices", "Let phones and other PCs on your Wi-Fi use the bypass", a.LANEnabled())
 	mURL := systray.AddMenuItem("", "Click to copy this address")
 	systray.AddSeparator()
-	mTest := systray.AddMenuItem("Test Steam connection", "Open Steam through the bypass and report")
-	mDash := systray.AddMenuItem("Open dashboard", "Devices, activity, logs, skip list")
+	mDash := systray.AddMenuItem("Open dashboard", "Devices, activity, logs, skip list, Steam test")
 	mClear := systray.AddMenuItem("Clear log", "Empty the log files and the dashboard log")
 	mAuto := systray.AddMenuItemCheckbox("Start with Windows", "", autostart.Enabled())
 	systray.AddSeparator()
@@ -93,16 +94,11 @@ func build(a *app.App) {
 					break
 				}
 				renderLAN()
-				url := a.LANURLs()[0]
-				copyText(url)
-				go notify.Send("Sharing is ON (address copied)", "On the phone: Wi-Fi > (i) > Configure Proxy > Automatic > paste "+url)
+				copyText(a.LANURLs()[0]) // silently: the checked menu item is the feedback
 			case <-mURL.ClickedCh:
 				if urls := a.LANURLs(); len(urls) > 0 {
 					copyText(urls[0])
-					go notify.Send("Copied", urls[0])
 				}
-			case <-mTest.ClickedCh:
-				go func() { _, msg := a.Check(); notify.Send("DPI bypass test", msg) }()
 			case <-mDash.ClickedCh:
 				openBrowser(a.DashboardURL())
 			case <-mClear.ClickedCh:

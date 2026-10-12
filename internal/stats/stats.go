@@ -18,12 +18,15 @@ const (
 	activeWindow = 2 * time.Minute
 )
 
-// Event is one finished (or failed) proxy connection.
+// Event is one proxy connection. It is recorded when the tunnel opens (Open is
+// true and the byte counts are still 0) and completed when it closes.
 type Event struct {
+	ID     uint64    `json:"id"`
 	Time   time.Time `json:"time"`
 	Client string    `json:"client"`
 	Host   string    `json:"host"` // host:port
 	Mode   string    `json:"mode"` // bypass | direct | auto-skip | failed
+	Open   bool      `json:"open"` // still connected
 	Up     int64     `json:"up"`
 	Down   int64     `json:"down"`
 	Millis int64     `json:"ms"`
@@ -33,10 +36,11 @@ type Event struct {
 // Device is a client that fetched the PAC or used the proxy.
 type Device struct {
 	IP         string    `json:"ip"`
-	Name       string    `json:"name"`     // chosen by the user
-	Hostname   string    `json:"hostname"` // from reverse DNS, often empty
-	MAC        string    `json:"mac"`      // only known for devices on the PC's own subnet
-	Agents     []string  `json:"agents"`   // what the device says it is (from User-Agent), e.g. "Android 14 · SM-S918B"
+	Name       string    `json:"name"`      // chosen by the user
+	Hostname   string    `json:"hostname"`  // from reverse DNS, often empty
+	MAC        string    `json:"mac"`       // only known for devices on the PC's own subnet
+	Agents     []string  `json:"agents"`    // what the device says it is (from User-Agent), e.g. "Android 14 · SM-S918B"
+	RawAgents  []string  `json:"rawAgents"` // the User-Agent headers as received, for troubleshooting
 	Self       bool      `json:"self"`
 	Active     bool      `json:"active"` // seen in the last 2 minutes
 	First      time.Time `json:"first"`
@@ -50,6 +54,7 @@ type Device struct {
 // Totals counts every connection since the app started (the event list is capped).
 type Totals struct {
 	Conns    int   `json:"conns"`
+	Open     int   `json:"open"` // connected right now
 	Bypass   int   `json:"bypass"`
 	Direct   int   `json:"direct"`
 	AutoSkip int   `json:"autoSkip"`
@@ -61,6 +66,8 @@ type Totals struct {
 type Store struct {
 	mu        sync.Mutex
 	totals    Totals
+	nextID    uint64
+	open      map[uint64]string // id -> client, for connections still open
 	events    []Event
 	devices   map[string]*Device
 	names     map[string]string
@@ -69,7 +76,7 @@ type Store struct {
 
 // New loads saved device names from namesPath ("" keeps names in memory only).
 func New(namesPath string) *Store {
-	s := &Store{devices: map[string]*Device{}, names: map[string]string{}, namesPath: namesPath}
+	s := &Store{devices: map[string]*Device{}, names: map[string]string{}, open: map[uint64]string{}, namesPath: namesPath}
 	if namesPath != "" {
 		if b, err := os.ReadFile(namesPath); err == nil {
 			json.Unmarshal(b, &s.names)
@@ -107,23 +114,38 @@ func (s *Store) touch(ip string) *Device {
 // phones behind one router (NAT) share an address.
 const maxAgents = 5
 
-// SeenAgent remembers what a device calls itself in its User-Agent header.
-func (s *Store) SeenAgent(client, userAgent string) {
-	label := Label(userAgent)
-	if label == "" {
-		return
+// SeenAgent remembers what a device calls itself in its User-Agent header. It
+// returns the short label (may be "") and whether this exact header was new for
+// the device, so the caller can log each distinct header once.
+func (s *Store) SeenAgent(client, userAgent string) (label string, isNew bool) {
+	if userAgent == "" {
+		return "", false
+	}
+	label = Label(userAgent)
+	raw := userAgent
+	if len(raw) > 300 {
+		raw = raw[:300]
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.touch(client)
-	for _, a := range d.Agents {
-		if a == label {
-			return
-		}
-	}
-	if len(d.Agents) < maxAgents {
+	if label != "" && !contains(d.Agents, label) && len(d.Agents) < maxAgents {
 		d.Agents = append(d.Agents, label)
 	}
+	if contains(d.RawAgents, raw) || len(d.RawAgents) >= maxAgents {
+		return label, false
+	}
+	d.RawAgents = append(d.RawAgents, raw)
+	return label, true
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) SeenPAC(client string) {
@@ -132,16 +154,20 @@ func (s *Store) SeenPAC(client string) {
 	s.touch(client).PACFetches++
 }
 
-func (s *Store) AddConn(e Event) {
+// Open records a connection as soon as its tunnel is established, so
+// long-lived connections (streaming, chat, push) count immediately. It returns
+// the id to pass to Close.
+func (s *Store) Open(e Event) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	d := s.touch(e.Client)
-	d.Conns++
-	d.Up += e.Up
-	d.Down += e.Down
+	s.nextID++
+	e.ID, e.Open = s.nextID, true
+	if e.Time.IsZero() {
+		e.Time = time.Now()
+	}
+	s.touch(e.Client).Conns++
 	s.totals.Conns++
-	s.totals.Up += e.Up
-	s.totals.Down += e.Down
+	s.totals.Open++
 	switch e.Mode {
 	case "bypass":
 		s.totals.Bypass++
@@ -152,10 +178,43 @@ func (s *Store) AddConn(e Event) {
 	case "failed":
 		s.totals.Failed++
 	}
+	s.open[e.ID] = e.Client
 	s.events = append(s.events, e)
 	if len(s.events) > maxEvents {
 		s.events = append([]Event(nil), s.events[len(s.events)-maxEvents:]...)
 	}
+	return e.ID
+}
+
+// Close completes a connection with its final size, duration and error.
+func (s *Store) Close(id uint64, up, down, millis int64, errText string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	client, ok := s.open[id]
+	if !ok {
+		return
+	}
+	delete(s.open, id)
+	s.totals.Open--
+	s.totals.Up += up
+	s.totals.Down += down
+	if d := s.devices[client]; d != nil {
+		d.Up += up
+		d.Down += down
+		d.Last = time.Now()
+	}
+	for i := len(s.events) - 1; i >= 0; i-- { // recent first; the event may have been trimmed away
+		if s.events[i].ID == id {
+			e := &s.events[i]
+			e.Open, e.Up, e.Down, e.Millis, e.Err = false, up, down, millis, errText
+			break
+		}
+	}
+}
+
+// AddConn records a connection that is already finished (open + close in one step).
+func (s *Store) AddConn(e Event) {
+	s.Close(s.Open(e), e.Up, e.Down, e.Millis, e.Err)
 }
 
 // enrich fills in the reverse-DNS name and MAC without blocking the proxy.
@@ -186,6 +245,7 @@ func (s *Store) Devices() []Device {
 	for _, d := range s.devices {
 		c := *d
 		c.Agents = append([]string{}, d.Agents...) // never nil in JSON, and not shared with the live record
+		c.RawAgents = append([]string{}, d.RawAgents...)
 		c.Name = s.names[c.IP]
 		c.Active = time.Since(c.Last) < activeWindow
 		out = append(out, c)

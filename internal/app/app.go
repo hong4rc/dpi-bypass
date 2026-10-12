@@ -54,15 +54,23 @@ func New(dir, addr, version string) *App {
 		a.noteAutoSkip(host)
 		sysproxy.Refresh() // let apps re-read the PAC that now sends the host direct
 	}
-	a.Proxy.OnConn = func(client, hostPort, mode string, up, down int64, dur time.Duration, err error) {
-		e := stats.Event{Time: time.Now(), Client: stats.ClientIP(client), Host: hostPort, Mode: mode, Up: up, Down: down, Millis: dur.Milliseconds()}
+	a.Proxy.OnOpen = func(client, hostPort, mode string) uint64 {
+		return a.Stats.Open(stats.Event{Client: stats.ClientIP(client), Host: hostPort, Mode: mode})
+	}
+	a.Proxy.OnClose = func(id uint64, up, down int64, dur time.Duration, err error) {
+		text := ""
 		if err != nil {
-			e.Err = err.Error()
+			text = err.Error()
 		}
-		a.Stats.AddConn(e)
+		a.Stats.Close(id, up, down, dur.Milliseconds(), text)
 	}
 	a.Proxy.OnPAC = func(client string) { a.Stats.SeenPAC(stats.ClientIP(client)) }
-	a.Proxy.OnClient = func(client, ua string) { a.Stats.SeenAgent(stats.ClientIP(client), ua) }
+	a.Proxy.OnClient = func(client, ua string) {
+		ip := stats.ClientIP(client)
+		if label, isNew := a.Stats.SeenAgent(ip, ua); isNew {
+			logx.Debug.Printf("device %s says: %q => %q", ip, ua, label) // each distinct header once, to learn what devices send
+		}
+	}
 	return a
 }
 

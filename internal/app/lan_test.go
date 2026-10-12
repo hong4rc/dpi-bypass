@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+func TestVirtualAdaptersAreSkipped(t *testing.T) {
+	for name, want := range map[string]bool{
+		"vEthernet (WSL (Hyper-V firewall))": true, "vEthernet (Default Switch)": true, "VMware Network Adapter VMnet8": true,
+		"VirtualBox Host-Only Network": true, "docker0": true, "veth1a2b3c": true, "virbr0": true, "br-1234abcd": true,
+		"Ethernet": false, "Wi-Fi": false, "eth0": false, "wlan0": false, "en0": false, "Local Area Connection* 10": false,
+	} {
+		if got := isVirtual(name); got != want {
+			t.Errorf("isVirtual(%q)=%v want %v", name, got, want)
+		}
+	}
+}
+
 func TestAllowedClient(t *testing.T) {
 	for ip, want := range map[string]bool{
 		"192.168.1.20": true, "10.1.2.3": true, "172.16.5.5": true, "127.0.0.1": true, "169.254.1.1": true,

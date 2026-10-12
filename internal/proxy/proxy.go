@@ -20,7 +20,7 @@ const (
 	firstReplyTimeout = 6 * time.Second
 )
 
-// Connection modes reported to OnConn.
+// Connection modes reported to OnOpen.
 const (
 	ModeBypass   = "bypass"    // ClientHello was split
 	ModeDirect   = "direct"    // forwarded untouched (skip list, LAN address, not TLS)
@@ -39,9 +39,13 @@ type Proxy struct {
 
 	OnSkip func(host string) // called when a host was auto-added to the blacklist
 
-	// Optional observers (dashboard). client is a RemoteAddr.
-	OnConn func(client, hostPort, mode string, up, down int64, dur time.Duration, err error)
-	OnPAC  func(client string)
+	// Optional observers (dashboard). client is a RemoteAddr. OnOpen is called
+	// as soon as a tunnel is established (or has failed) and returns an id;
+	// OnClose is called with that id when the tunnel ends, so long-lived
+	// connections are visible while they are still open.
+	OnOpen  func(client, hostPort, mode string) uint64
+	OnClose func(id uint64, up, down int64, dur time.Duration, err error)
+	OnPAC   func(client string)
 
 	// OnClient reports the User-Agent a client sent with its PAC fetch or CONNECT,
 	// which usually reveals the device type (and often the model).
@@ -101,11 +105,22 @@ func (p *Proxy) noteClient(r *http.Request) {
 	}
 }
 
-func (p *Proxy) report(r *http.Request, mode string, up, down int64, start time.Time, err error) {
-	if p.OnConn != nil {
-		p.OnConn(r.RemoteAddr, r.Host, mode, up, down, time.Since(start), err)
+// open reports a new connection and returns a function that reports its end.
+func (p *Proxy) open(r *http.Request, mode string) (end func(up, down int64, err error)) {
+	if p.OnOpen == nil {
+		return func(int64, int64, error) {}
+	}
+	start := time.Now()
+	id := p.OnOpen(r.RemoteAddr, r.Host, mode)
+	return func(up, down int64, err error) {
+		if p.OnClose != nil {
+			p.OnClose(id, up, down, time.Since(start), err)
+		}
 	}
 }
+
+// fail reports a connection that never got established.
+func (p *Proxy) fail(r *http.Request, err error) { p.open(r, ModeFailed)(0, 0, err) }
 
 func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -119,14 +134,14 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 	up, err := net.DialTimeout("tcp", r.Host, dialTimeout)
 	if err != nil {
 		logx.Info.Printf("FAIL dial %s: %v", r.Host, err)
-		p.report(r, ModeFailed, 0, 0, start, err)
+		p.fail(r, err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	if !clientIsLocal(r.RemoteAddr) && isSelf(up.RemoteAddr()) {
 		up.Close()
 		logx.Info.Printf("BLOCKED %s: LAN client %s tried to reach this PC through the proxy", r.Host, r.RemoteAddr)
-		p.report(r, ModeFailed, 0, 0, start, fmt.Errorf("blocked: LAN client may not reach this PC"))
+		p.fail(r, fmt.Errorf("blocked: LAN client may not reach this PC"))
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -144,7 +159,7 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 		var reply []byte
 		if up, reply, mode, err = p.handshake(cl, up, r.Host, host); err != nil {
 			logx.Info.Printf("FAIL %s: %v", r.Host, err)
-			p.report(r, ModeFailed, 0, 0, start, err)
+			p.fail(r, err)
 			return
 		}
 		if len(reply) > 0 {
@@ -154,6 +169,7 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 		logx.Debug.Printf("handshake ok %s mode=%s (%s)", r.Host, mode, time.Since(start).Round(time.Millisecond))
 	}
 	defer func() { up.Close() }()
+	end := p.open(r, mode) // counted now, while the tunnel is still open
 
 	upBytes := make(chan int64, 1)
 	go func() { n, _ := io.Copy(up, cl); upBytes <- n }()
@@ -162,7 +178,7 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 	up.Close()
 	upN := <-upBytes
 	logx.Debug.Printf("closed %s up=%d down=%d dur=%s err=%v", r.Host, upN, down+n, time.Since(start).Round(time.Millisecond), err)
-	p.report(r, mode, upN, down+n, start, nil)
+	end(upN, down+n, nil)
 }
 
 // handshake sends the client's ClientHello upstream, split unless the host is

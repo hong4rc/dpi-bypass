@@ -111,6 +111,7 @@ tbody tr+tr td{box-shadow:inset 0 1px 0 rgba(128,140,200,.07)}
 .badge.bypass{background:var(--ok-bg);color:var(--green)}
 .badge.auto-skip{background:var(--warn-bg);color:var(--yellow)}
 .badge.failed{background:var(--bad-bg);color:var(--red)}
+.badge.open{background:var(--accent-bg);color:var(--accent)}
 .live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--s3);margin-right:9px}
 .live.active{background:var(--green)}
 
@@ -298,7 +299,7 @@ function render(s) {
   $('up').textContent = 'running ' + dur(s.uptimeSec);
   const t = s.totals;
   $('stats').innerHTML = [
-    ['Connections', t.conns, ''], ['Bypassed', t.bypass, 'good'], ['Direct', t.direct, ''],
+    ['Open now', t.open, t.open ? 'good' : ''], ['Connections', t.conns, ''], ['Bypassed', t.bypass, 'good'], ['Direct', t.direct, ''],
     ['Auto-skipped', t.autoSkip, t.autoSkip ? 'warn' : ''], ['Failed', t.failed, t.failed ? 'bad' : ''],
     ['Downloaded', fmtBytes(t.down), ''], ['Uploaded', fmtBytes(t.up), ''],
   ].map(([k, v, c]) => '<div class="stat ' + c + '"><b>' + esc(v) + '</b><span>' + esc(k) + '</span></div>').join('');
@@ -332,7 +333,7 @@ async function loadDevices() {
       const extra = [d.hostname, ...agents].filter(x => x && x !== title);
       const sub = extra.length ? '<div class="muted" style="font-size:12px">' + esc(extra.join(' · ')) + '</div>' : '';
       return '<tr><td><span class="live ' + (d.active ? 'active' : '') + '" title="' + (d.active ? 'active now' : 'idle') + '"></span>' +
-        '<a href="#" data-rename="' + esc(d.ip) + '" data-name="' + esc(d.name) + '" title="Rename">' + esc(title) + '</a>' + sub + '</td>' +
+        '<a href="#" data-rename="' + esc(d.ip) + '" data-name="' + esc(d.name) + '" title="' + esc(['Click to rename', ...(d.rawAgents || []).map(a => 'User-Agent: ' + a)].join('\n')) + '">' + esc(title) + '</a>' + sub + '</td>' +
         '<td>' + esc(d.ip) + '</td><td class="muted">' + esc(d.mac || '-') + '</td>' +
         '<td>' + esc(ago(d.last)) + '</td><td>' + d.conns + (d.pacFetches ? ' <span class="muted">(+' + d.pacFetches + ' setup fetches)</span>' : '') + '</td>' +
         '<td>' + esc(fmtBytes(d.down)) + ' <span class="muted">down</span> / ' + esc(fmtBytes(d.up)) + ' <span class="muted">up</span></td></tr>';
@@ -357,8 +358,8 @@ function renderActivity() {
   $('activityBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Time</th><th>Device</th><th>Site</th><th>Result</th><th>Size</th><th>Took</th><th></th></tr></thead><tbody>' +
     rows.map(e => '<tr><td class="muted">' + esc(new Date(e.time).toLocaleTimeString()) + '</td><td>' + esc(e.client === '127.0.0.1' ? 'this PC' : e.client) + '</td>' +
       '<td>' + esc(e.host) + (e.err ? '<div class="muted" style="font-size:12px">' + esc(e.err) + '</div>' : '') + '</td>' +
-      '<td><span class="badge ' + esc(e.mode) + '">' + esc(modeLabel[e.mode] || e.mode) + '</span></td>' +
-      '<td class="muted">' + esc(fmtBytes(e.down + e.up)) + '</td><td class="muted">' + e.ms + ' ms</td>' +
+      '<td><span class="badge ' + esc(e.mode) + '">' + esc(modeLabel[e.mode] || e.mode) + '</span>' + (e.open ? ' <span class="badge open">open</span>' : '') + '</td>' +
+      '<td class="muted">' + (e.open ? '-' : esc(fmtBytes(e.down + e.up))) + '</td><td class="muted">' + (e.open ? 'open' : e.ms + ' ms') + '</td>' +
       '<td style="text-align:right">' + (e.mode === 'direct' ? '' : '<button class="btn ghost small" data-skip="' + esc(hostOf(e.host)) + '">Skip</button>') + '</td></tr>').join('') + '</tbody></table></div>';
 }
 $('modeFilter').addEventListener('change', renderActivity);

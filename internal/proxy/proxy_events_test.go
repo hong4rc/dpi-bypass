@@ -15,21 +15,40 @@ import (
 	"dpi/internal/blacklist"
 )
 
-type connEvent struct {
+type openEvent struct {
+	id                 uint64
 	client, host, mode string
-	up, down           int64
-	err                error
 }
 
-func TestOnConnReportsABypassedConnection(t *testing.T) {
+type closeEvent struct {
+	id       uint64
+	up, down int64
+	err      error
+}
+
+// observe wires OnOpen/OnClose to channels, handing out sequential ids.
+func observe(p *Proxy) (<-chan openEvent, <-chan closeEvent) {
+	opens, closes := make(chan openEvent, 8), make(chan closeEvent, 8)
+	var next uint64
+	p.OnOpen = func(client, host, mode string) uint64 {
+		next++
+		opens <- openEvent{next, client, host, mode}
+		return next
+	}
+	p.OnClose = func(id uint64, up, down int64, _ time.Duration, err error) {
+		closes <- closeEvent{id, up, down, err}
+	}
+	return opens, closes
+}
+
+// A tunnel is reported as soon as it is established, while it is still open,
+// and again with its final size when it ends.
+func TestConnectionIsReportedWhileOpenAndAgainWhenClosed(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "hi") }))
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	p, _, proxyAddr := proxyServer(t, u.Port())
-	events := make(chan connEvent, 4)
-	p.OnConn = func(client, host, mode string, up, down int64, _ time.Duration, err error) {
-		events <- connEvent{client, host, mode, up, down, err}
-	}
+	opens, closes := observe(p)
 
 	tr := srv.Client().Transport.(*http.Transport).Clone()
 	tr.Proxy = http.ProxyURL(&url.URL{Scheme: "http", Host: proxyAddr})
@@ -39,24 +58,37 @@ func TestOnConnReportsABypassedConnection(t *testing.T) {
 	}
 	io.ReadAll(resp.Body)
 	resp.Body.Close()
-	tr.CloseIdleConnections() // ends the tunnel so the proxy reports it
 
+	// keep-alive: the tunnel is still open, and must already be counted
+	var o openEvent
 	select {
-	case e := <-events:
-		if e.mode != ModeBypass || e.host != u.Host || e.up == 0 || e.down == 0 || e.err != nil || !strings.HasPrefix(e.client, "127.0.0.1:") {
-			t.Fatalf("unexpected event: %+v", e)
+	case o = <-opens:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no OnOpen while the connection is open")
+	}
+	if o.mode != ModeBypass || o.host != u.Host || !strings.HasPrefix(o.client, "127.0.0.1:") {
+		t.Fatalf("unexpected open: %+v", o)
+	}
+	select {
+	case c := <-closes:
+		t.Fatalf("OnClose fired while the tunnel is still open: %+v", c)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	tr.CloseIdleConnections() // now the tunnel ends
+	select {
+	case c := <-closes:
+		if c.id != o.id || c.up == 0 || c.down == 0 || c.err != nil {
+			t.Fatalf("unexpected close: %+v (open id %d)", c, o.id)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("no OnConn event")
+		t.Fatal("no OnClose after the tunnel ended")
 	}
 }
 
-func TestOnConnReportsAFailedDial(t *testing.T) {
+func TestAFailedDialIsReportedAsOpenThenClosedWithTheError(t *testing.T) {
 	p, _, proxyAddr := proxyServer(t, "1")
-	events := make(chan connEvent, 1)
-	p.OnConn = func(client, host, mode string, up, down int64, _ time.Duration, err error) {
-		events <- connEvent{client, host, mode, up, down, err}
-	}
+	opens, closes := observe(p)
 
 	c, err := net.Dial("tcp", proxyAddr)
 	if err != nil {
@@ -69,12 +101,20 @@ func TestOnConnReportsAFailedDial(t *testing.T) {
 		t.Fatalf("want 502, got %q", line)
 	}
 	select {
-	case e := <-events:
-		if e.mode != ModeFailed || e.err == nil || e.host != "127.0.0.1:1" {
-			t.Fatalf("unexpected event: %+v", e)
+	case o := <-opens:
+		if o.mode != ModeFailed || o.host != "127.0.0.1:1" {
+			t.Fatalf("unexpected open: %+v", o)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("no OnConn event for failed dial")
+		t.Fatal("no OnOpen for the failed dial")
+	}
+	select {
+	case cl := <-closes:
+		if cl.err == nil {
+			t.Fatalf("failed connection must carry its error: %+v", cl)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no OnClose for the failed dial")
 	}
 }
 

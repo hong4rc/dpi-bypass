@@ -6,10 +6,16 @@ import (
 )
 
 var (
-	// Android: "Linux; Android 14; SM-S918B Build/UP1A..." (system PAC fetch) or "Android 13; Pixel 7)" (Chrome).
-	reAndroid = regexp.MustCompile(`Android ([\d.]+)(?:; ([^;)]+))?`)
-	// iOS: "iPhone; CPU iPhone OS 17_2 like Mac OS X" / "iPad; CPU OS 16_6 like Mac OS X".
-	reIOS = regexp.MustCompile(`OS (\d+)[_.](\d+)`)
+	reAndroidVersion = regexp.MustCompile(`Android ([\d.]+)`)
+	// the "(...)" part that follows the Android version: "Android 14; SM-S918B Build/UP1A..." or
+	// "Android 10; en_US; SM-G973F Build/QP1A...; Cronet/121"
+	reAndroidParts = regexp.MustCompile(`Android [\d.]+;([^)]*)\)`)
+	reLocale       = regexp.MustCompile(`^[a-z]{2,3}[_-][A-Za-z]{2,4}$`)
+	reFBDevice     = regexp.MustCompile(`FBDV/([^;/\]]+)`) // Facebook / Messenger app: FBDV/SM-G973F
+	// iOS: "iPhone; CPU iPhone OS 17_2", "iPad; CPU OS 16_6", "CPU iOS 17_2"
+	reIOSVersion = regexp.MustCompile(`(?:OS|iOS) (\d+)[_.](\d+)`)
+	// iOS apps: "(iPhone14,5; U; CPU iOS 17_2 ...)" carries Apple's model identifier
+	reAppleModel = regexp.MustCompile(`(iPhone|iPad|iPod)(\d+,\d+)`)
 )
 
 // Label turns a User-Agent into a short device description such as
@@ -18,28 +24,9 @@ var (
 func Label(ua string) string {
 	switch {
 	case strings.Contains(ua, "iPhone") || strings.Contains(ua, "iPad") || strings.Contains(ua, "iPod"):
-		kind := "iPhone"
-		if strings.Contains(ua, "iPad") {
-			kind = "iPad"
-		} else if strings.Contains(ua, "iPod") {
-			kind = "iPod"
-		}
-		if m := reIOS.FindStringSubmatch(ua); m != nil {
-			return kind + " · iOS " + m[1] + "." + m[2]
-		}
-		return kind
+		return appleLabel(ua)
 	case strings.Contains(ua, "Android"):
-		m := reAndroid.FindStringSubmatch(ua)
-		if m == nil {
-			return "Android"
-		}
-		label := "Android " + m[1]
-		// the model may be followed by " Build/..." and Chrome's reduced UA uses a placeholder like "K"
-		model := strings.TrimSpace(strings.SplitN(m[2], " Build/", 2)[0])
-		if len(model) > 2 && model != "Mobile" {
-			label += " · " + model
-		}
-		return label
+		return androidLabel(ua)
 	case strings.Contains(ua, "Windows NT"):
 		return "Windows PC"
 	case strings.Contains(ua, "Macintosh"):
@@ -50,6 +37,59 @@ func Label(ua string) string {
 		return "Linux PC"
 	case strings.Contains(ua, "CFNetwork") || strings.Contains(ua, "Darwin"):
 		return "Apple device"
+	}
+	return ""
+}
+
+func appleLabel(ua string) string {
+	kind := "iPhone"
+	switch {
+	case strings.Contains(ua, "iPad"):
+		kind = "iPad"
+	case strings.Contains(ua, "iPod"):
+		kind = "iPod"
+	}
+	label := kind
+	if m := reAppleModel.FindStringSubmatch(ua); m != nil {
+		label = m[1] + m[2] // Apple's identifier, e.g. iPhone14,5
+	}
+	if m := reIOSVersion.FindStringSubmatch(ua); m != nil {
+		label += " · iOS " + m[1] + "." + m[2]
+	}
+	return label
+}
+
+func androidLabel(ua string) string {
+	label := "Android"
+	if m := reAndroidVersion.FindStringSubmatch(ua); m != nil {
+		label += " " + m[1]
+	}
+	if model := androidModel(ua); model != "" {
+		label += " · " + model
+	}
+	return label
+}
+
+// androidModel finds the phone model if the agent carries one. Chrome's reduced
+// User-Agent only says "Android 10; K", which tells nothing, so it yields "".
+func androidModel(ua string) string {
+	if m := reFBDevice.FindStringSubmatch(ua); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	m := reAndroidParts.FindStringSubmatch(ua)
+	if m == nil {
+		return ""
+	}
+	for _, part := range strings.Split(m[1], ";") {
+		part = strings.TrimSpace(strings.SplitN(part, " Build/", 2)[0])
+		switch {
+		case len(part) <= 2, // "K" and similar placeholders
+			part == "wv", part == "U", part == "Mobile", part == "Tablet",
+			reLocale.MatchString(part),
+			strings.Contains(part, "/"): // "Cronet/121..." and other app tokens
+			continue
+		}
+		return part
 	}
 	return ""
 }

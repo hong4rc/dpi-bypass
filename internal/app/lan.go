@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"dpi/internal/logx"
 	"dpi/internal/settings"
@@ -21,7 +22,7 @@ func lanIPs() []string {
 	var ips []string
 	ifaces, _ := net.Interfaces()
 	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 || isVirtual(ifc.Name) {
 			continue
 		}
 		addrs, _ := ifc.Addrs()
@@ -151,4 +152,16 @@ func (a *App) lanURLs() []string {
 		urls = append(urls, "http://"+ln.Addr().String()+"/proxy.pac")
 	}
 	return urls
+}
+
+// isVirtual reports adapters that only talk to VMs and containers (Hyper-V, WSL, Docker, VMware...).
+// Phones are never on them, and listing their addresses would only confuse the setup address.
+func isVirtual(name string) bool {
+	name = strings.ToLower(name)
+	for _, s := range []string{"vethernet", "wsl", "hyper-v", "vmware", "virtualbox", "vboxnet", "docker", "veth", "virbr", "br-"} {
+		if strings.Contains(name, s) {
+			return true
+		}
+	}
+	return false
 }

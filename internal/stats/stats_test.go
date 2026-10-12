@@ -89,6 +89,75 @@ func TestAgentsAreBoundedAndNeverNil(t *testing.T) {
 	}
 }
 
+func TestAConnectionCountsAsSoonAsItOpensAndGetsItsSizeWhenItCloses(t *testing.T) {
+	s := New("")
+	id := s.Open(Event{Client: "192.168.1.13", Host: "www.google.com:443", Mode: "bypass"})
+
+	dev := s.Devices()[0]
+	if dev.Conns != 1 || dev.Up != 0 || dev.Down != 0 {
+		t.Fatalf("an open connection must already count: %+v", dev)
+	}
+	if tot := s.Totals(); tot.Conns != 1 || tot.Open != 1 || tot.Bypass != 1 {
+		t.Fatalf("totals while open: %+v", tot)
+	}
+	if ev := s.Recent(1)[0]; !ev.Open || ev.ID != id {
+		t.Fatalf("event should be marked open: %+v", ev)
+	}
+
+	s.Close(id, 100, 2000, 1500, "")
+	dev = s.Devices()[0]
+	if dev.Conns != 1 || dev.Up != 100 || dev.Down != 2000 {
+		t.Fatalf("device after close: %+v", dev)
+	}
+	if tot := s.Totals(); tot.Open != 0 || tot.Up != 100 || tot.Down != 2000 || tot.Conns != 1 {
+		t.Fatalf("totals after close: %+v", tot)
+	}
+	if ev := s.Recent(1)[0]; ev.Open || ev.Up != 100 || ev.Down != 2000 || ev.Millis != 1500 {
+		t.Fatalf("event after close: %+v", ev)
+	}
+
+	s.Close(id, 5, 5, 5, "") // closing twice, or an unknown id, must not double count
+	s.Close(9999, 5, 5, 5, "")
+	if tot := s.Totals(); tot.Up != 100 || tot.Open != 0 {
+		t.Fatalf("double close changed totals: %+v", tot)
+	}
+}
+
+func TestBytesStillCountWhenTheEventWasTrimmedAway(t *testing.T) {
+	s := New("")
+	first := s.Open(Event{Client: "192.168.1.13", Host: "long-lived:443", Mode: "bypass"})
+	for i := 0; i < maxEvents+10; i++ {
+		s.AddConn(Event{Client: "127.0.0.1", Host: "x:443", Mode: "direct"})
+	}
+	s.Close(first, 7, 9, 1, "")
+	for _, d := range s.Devices() {
+		if d.IP == "192.168.1.13" && (d.Up != 7 || d.Down != 9) {
+			t.Fatalf("bytes lost for a long-lived connection: %+v", d)
+		}
+	}
+	if tot := s.Totals(); tot.Open != 0 {
+		t.Fatalf("still shows open connections: %+v", tot)
+	}
+}
+
+func TestSeenAgentReportsEachDistinctHeaderOnce(t *testing.T) {
+	s := New("")
+	ua := "Mozilla/5.0 (Linux; Android 10; K) Chrome/120 Mobile Safari/537.36"
+	label, isNew := s.SeenAgent("192.168.1.13", ua)
+	if label != "Android 10" || !isNew {
+		t.Fatalf("first sight: %q new=%v", label, isNew)
+	}
+	if _, isNew := s.SeenAgent("192.168.1.13", ua); isNew {
+		t.Fatal("the same header must not be reported again")
+	}
+	if label, isNew := s.SeenAgent("192.168.1.13", "curl/8.4.0"); label != "" || !isNew {
+		t.Fatalf("an unlabeled agent is still worth logging once: %q new=%v", label, isNew)
+	}
+	if raw := s.Devices()[0].RawAgents; len(raw) != 2 || raw[0] != ua {
+		t.Fatalf("raw agents: %q", raw)
+	}
+}
+
 func TestEventsAreCapped(t *testing.T) {
 	s := New("")
 	for i := 0; i < maxEvents+25; i++ {
