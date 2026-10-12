@@ -12,6 +12,19 @@ import (
 	"time"
 )
 
+// newLANApp is an App whose "LAN addresses" are loopback, so tests never listen on
+// the machine's real LAN address: Windows Firewall asks for permission for every
+// new test program that does, and each test run is a new program. Set
+// DPI_TEST_REAL_LAN=1 to run these tests against the real LAN address instead.
+func newLANApp(t *testing.T, dir string) *App {
+	t.Helper()
+	a := New(dir, "127.0.0.1:0", "test")
+	if os.Getenv("DPI_TEST_REAL_LAN") == "" {
+		a.LANAddrs = func() []string { return []string{"127.0.0.1"} }
+	}
+	return a
+}
+
 func TestVirtualAdaptersAreSkipped(t *testing.T) {
 	for name, want := range map[string]bool{
 		"vEthernet (WSL (Hyper-V firewall))": true, "vEthernet (Default Switch)": true, "VMware Network Adapter VMnet8": true,
@@ -36,11 +49,8 @@ func TestAllowedClient(t *testing.T) {
 }
 
 func TestEnableAndDisableLAN(t *testing.T) {
-	if len(lanIPs()) == 0 {
-		t.Skip("no private LAN address on this machine")
-	}
 	dir := t.TempDir()
-	a := New(dir, "127.0.0.1:0", "test")
+	a := newLANApp(t, dir)
 
 	if err := a.EnableLAN(); err != nil {
 		t.Fatal(err)
@@ -58,7 +68,7 @@ func TestEnableAndDisableLAN(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	hostPort := strings.TrimSuffix(strings.TrimPrefix(urls[0], "http://"), "/proxy.pac")
-	if !strings.Contains(string(body), "PROXY "+hostPort) || strings.Contains(string(body), "PROXY 127.0.0.1") {
+	if !strings.Contains(string(body), "PROXY "+hostPort) || (os.Getenv("DPI_TEST_REAL_LAN") != "" && strings.Contains(string(body), "PROXY 127.0.0.1")) {
 		t.Fatalf("PAC does not point at %s:\n%s", hostPort, body)
 	}
 
@@ -76,11 +86,8 @@ func TestEnableAndDisableLAN(t *testing.T) {
 }
 
 func TestLANSettingSurvivesARestart(t *testing.T) {
-	if len(lanIPs()) == 0 {
-		t.Skip("no private LAN address on this machine")
-	}
 	dir := t.TempDir()
-	a := New(dir, "127.0.0.1:0", "test")
+	a := newLANApp(t, dir)
 	if a.LANWanted() {
 		t.Fatal("sharing must start off")
 	}
@@ -113,10 +120,7 @@ func TestOldMarkerFileMovesIntoSettings(t *testing.T) {
 }
 
 func TestIdentifyPageComesAndGoesWithSharing(t *testing.T) {
-	if len(lanIPs()) == 0 {
-		t.Skip("no private LAN address on this machine")
-	}
-	a := New(t.TempDir(), "127.0.0.1:0", "test")
+	a := newLANApp(t, t.TempDir())
 	if len(a.IdentifyURLs()) != 0 {
 		t.Fatal("no identify page before sharing is on")
 	}

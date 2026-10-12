@@ -30,6 +30,7 @@ type App struct {
 	Proxy    *proxy.Proxy
 	Stats    *stats.Store
 	Settings *settings.Store
+	LANAddrs func() []string // addresses to share on: the PC's private LAN addresses unless a test swaps it
 
 	notice       skipNotice
 	noticeWindow time.Duration
@@ -46,6 +47,7 @@ type App struct {
 func New(dir, addr, version string) *App {
 	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{}),
 		noticeWindow: skipNoticeWindow, send: notify.Send}
+	a.LANAddrs = lanIPs
 	a.BL = blacklist.New(filepath.Join(dir, "blacklist.txt"))
 	a.Stats = stats.New(filepath.Join(dir, "devices.json"))
 	a.Settings = settings.Load(filepath.Join(dir, "settings.json"))

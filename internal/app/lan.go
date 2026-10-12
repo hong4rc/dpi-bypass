@@ -109,7 +109,7 @@ func (a *App) EnableLAN() error {
 	}
 	_, port, _ := net.SplitHostPort(a.Addr)
 	var bound []string
-	for _, ip := range lanIPs() {
+	for _, ip := range a.LANAddrs() {
 		ln, err := net.Listen("tcp", net.JoinHostPort(ip, port))
 		if err != nil {
 			logx.Info.Printf("LAN: cannot listen on %s: %v", ip, err)

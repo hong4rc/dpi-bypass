@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +18,9 @@ import (
 func sharing(t *testing.T) (http.Handler, *app.App) {
 	t.Helper()
 	h, a := newHandler(t)
+	if os.Getenv("DPI_TEST_REAL_LAN") == "" { // loopback: a test that listens on the real LAN address makes Windows Firewall ask permission on every run
+		a.LANAddrs = func() []string { return []string{"127.0.0.1"} }
+	}
 	if err := a.EnableLAN(); err != nil {
 		t.Skipf("no LAN address to share on: %v", err)
 	}
