@@ -1,14 +1,15 @@
 set shell := ["powershell.exe", "-NoProfile", "-Command"]
 
-# vet + build dpi.exe
+# vet + test + build dpi.exe (tray app, no console window)
 build:
     go vet ./...
-    go build -o dpi.exe .
+    go test ./...
+    go build -ldflags "-H=windowsgui -X main.version=dev" -o dpi.exe ./cmd/dpi-bypass
 
-# build and run (Ctrl+C to stop)
-run: build
-    ./dpi.exe
+# run from source with console output (Ctrl+C to stop)
+run:
+    go run ./cmd/dpi-bypass
 
 # reset Windows proxy setting if dpi.exe was killed
 restore:
-    ./dpi.exe -restore
+    go run ./cmd/dpi-bypass -restore

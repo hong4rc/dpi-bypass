@@ -5,17 +5,37 @@ on:
   pull_request:
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
+          go-version-file: go.mod
+          cache: false
       - run: go vet ./...
       - run: go test ./...
-      - run: go build -o dpi.exe .
+      - run: go build -ldflags "-H=windowsgui" -o dpi.exe ./cmd/dpi-bypass
       - uses: actions/upload-artifact@v4
         with:
           name: dpi-windows
           path: dpi.exe
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [darwin/amd64, darwin/arm64, linux/amd64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: build ${{ matrix.target }}
+        run: |
+          export GOOS=${MATRIX_TARGET%/*} GOARCH=${MATRIX_TARGET#*/} CGO_ENABLED=0
+          go vet ./...
+          go build -o /dev/null ./cmd/dpi-bypass
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
