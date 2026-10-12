@@ -22,13 +22,16 @@ func autostartEnabled() bool {
 }
 
 func setAutostart(on bool) error {
-	k, err := registry.OpenKey(registry.CURRENT_USER, runPath, registry.SET_VALUE)
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, runPath, registry.SET_VALUE) // key may not exist on a fresh profile
 	if err != nil {
 		return err
 	}
 	defer k.Close()
 	if !on {
-		return k.DeleteValue(runValue)
+		if err := k.DeleteValue(runValue); err != nil && err != registry.ErrNotExist {
+			return err
+		}
+		return nil
 	}
 	exe, err := os.Executable()
 	if err != nil {
