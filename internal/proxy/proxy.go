@@ -1,6 +1,7 @@
 // Package proxy is a CONNECT proxy that fragments the TLS ClientHello so
 // SNI-based DPI can't read the site name. It also serves the PAC file that
-// points the system at it.
+// points the system at it. Whether a given site is fragmented, and what is
+// learned from how connections go, is decided by the policy package.
 package proxy
 
 import (
@@ -11,33 +12,37 @@ import (
 	"strings"
 	"time"
 
-	"dpi/internal/blacklist"
 	"dpi/internal/logx"
+	"dpi/internal/policy"
 )
 
-const (
+// Timeouts; variables so tests can shorten them.
+var (
 	dialTimeout       = 10 * time.Second
 	firstReplyTimeout = 6 * time.Second
 )
 
 // Connection modes reported to OnOpen.
 const (
-	ModeBypass   = "bypass"    // ClientHello was split
-	ModeDirect   = "direct"    // forwarded untouched (skip list, LAN address, not TLS)
-	ModeAutoSkip = "auto-skip" // split failed, retry unsplit worked, host now skipped
-	ModeFailed   = "failed"
+	ModeBypass     = "bypass"      // ClientHello was split
+	ModeDirect     = "direct"      // forwarded untouched (never-bypass site, LAN address, not TLS, Learn's normal attempt)
+	ModeAutoSkip   = "auto-skip"   // Always: the split failed, the direct retry worked
+	ModeAutoBypass = "auto-bypass" // Learn: the normal attempt failed, the split retry worked
+	ModeFailed     = "failed"
 )
 
 type Proxy struct {
 	addr     string
-	bl       *blacklist.List
+	pol      *policy.Policy
 	TLSPorts map[string]bool // ports whose first bytes are a TLS ClientHello
 
 	// SplitPrivate also fragments hellos sent to LAN/loopback IPs. Off by default:
 	// routers and other embedded servers often can't reassemble fragments.
 	SplitPrivate bool
 
-	OnSkip func(host string) // called when a host was auto-added to the blacklist
+	// OnLearn is called when the policy persisted a new decision for host
+	// (NO_BYPASS or NEEDS_BYPASS) after enough evidence.
+	OnLearn func(host string, d policy.Decision)
 
 	// Optional observers (dashboard). client is a RemoteAddr. OnOpen is called
 	// as soon as a tunnel is established (or has failed) and returns an id;
@@ -55,8 +60,8 @@ type Proxy struct {
 	Fallback http.Handler
 }
 
-func New(addr string, bl *blacklist.List) *Proxy {
-	return &Proxy{addr: addr, bl: bl, TLSPorts: map[string]bool{"443": true}}
+func New(addr string, pol *policy.Policy) *Proxy {
+	return &Proxy{addr: addr, pol: pol, TLSPorts: map[string]bool{"443": true}}
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +78,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // servePAC: only https:// to public hosts goes to this proxy; plain http, LAN
-// addresses, local names and the blacklist go DIRECT.
+// addresses, local names and the never-bypass sites go DIRECT. Everything else
+// goes through the proxy, also in Learn mode: the proxy has to see a failure to learn from it.
 func (p *Proxy) servePAC(w http.ResponseWriter, r *http.Request) {
 	logx.Debug.Printf("PAC requested by %s (Host %s)", r.RemoteAddr, r.Host)
 	if p.OnPAC != nil {
@@ -85,7 +91,7 @@ func (p *Proxy) servePAC(w http.ResponseWriter, r *http.Request) {
 		proxyAddr = r.Host // a LAN device must be told our LAN address, not 127.0.0.1
 	}
 	var quoted []string
-	for _, d := range p.bl.Items() {
+	for _, d := range p.pol.Skip.Items() {
 		quoted = append(quoted, fmt.Sprintf("%q", d))
 	}
 	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
@@ -181,60 +187,106 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 	end(upN, down+n, nil)
 }
 
-// handshake sends the client's ClientHello upstream, split unless the host is
-// blacklisted. If the split hello gets no usable reply it retries once unsplit
-// on a fresh connection and, when that works, blacklists the host. It returns
-// the connection to use, the server's first bytes and how it was handled.
+// send writes the ClientHello with method m and waits for the server's first
+// bytes. usable is false when nothing came back, or when a split hello was
+// answered with a TLS alert (the server could not reassemble it). A direct
+// hello answered with an alert is a real answer: the server just refused.
+func send(c net.Conn, hello []byte, m policy.Method) (reply []byte, usable bool) {
+	var err error
+	if m == policy.Split {
+		err = writeSplit(c, hello)
+	} else {
+		_, err = c.Write(hello)
+	}
+	if err != nil {
+		return nil, false
+	}
+	reply = readFirst(c)
+	return reply, reply != nil && !(m == policy.Split && isAlert(reply))
+}
+
+func name(m policy.Method) string {
+	if m == policy.Split {
+		return "split"
+	}
+	return "direct"
+}
+
+// handshake forwards the client's ClientHello the way the policy plans for this
+// host: first attempt, then a fallback on a fresh connection if the first got no
+// usable reply. A working fallback is evidence for a decision, which the policy
+// persists only once it has been seen often enough. It returns the connection to
+// use, the server's first bytes and how the connection was handled.
 func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byte, string, error) {
 	hello, err := readHello(cl)
 	if err != nil {
 		up.Close()
 		return nil, nil, "", err
 	}
-	if hello[0] != 0x16 || p.bl.Match(host) || (!p.SplitPrivate && (isPrivate(host) || isPrivateAddr(up.RemoteAddr()))) { // not TLS, or told to skip: forward untouched
+	local := !p.SplitPrivate && (isPrivate(host) || isPrivateAddr(up.RemoteAddr()))
+	plan := p.pol.PlanFor(host)
+	if hello[0] != 0x16 || local || plan.Fallback == policy.None {
+		// not TLS, a LAN server, or a never-bypass site: forward untouched, nothing to wait for or learn
 		if _, err := up.Write(hello); err != nil {
 			up.Close()
 			return nil, nil, "", err
 		}
 		return up, nil, ModeDirect, nil
 	}
-	if err := writeSplit(up, hello); err != nil {
-		up.Close()
-		return nil, nil, "", err
-	}
-	reply := readFirst(up)
-	if reply != nil && !isAlert(reply) {
-		return up, reply, ModeBypass, nil
+
+	if reply, ok := send(up, hello, plan.First); ok {
+		p.pol.Succeeded(host, plan) // a working first attempt disproves earlier failures: they were transient
+		if plan.First == policy.Split {
+			return up, reply, ModeBypass, nil
+		}
+		return up, reply, ModeDirect, nil
 	}
 	up.Close()
 
-	// No reply, or a TLS alert: the server may not reassemble fragmented hellos.
-	logx.Debug.Printf("split hello to %s got no usable reply (alert=%v), retrying unsplit", target, reply != nil)
+	logx.Debug.Printf("%s: no usable reply to the %s attempt, trying %s", target, name(plan.First), name(plan.Fallback))
 	up2, err := net.DialTimeout("tcp", target, dialTimeout)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	if _, err := up2.Write(hello); err != nil {
-		up2.Close()
-		return nil, nil, "", err
-	}
-	reply = readFirst(up2)
-	if reply == nil {
-		up2.Close()
-		return nil, nil, "", fmt.Errorf("NO REPLY with or without split (blocked or down)")
-	}
-	if isAlert(reply) { // rejects us either way (e.g. unsupported TLS version): not the split's fault
-		return up2, reply, ModeDirect, nil
-	}
-	added, err := p.bl.Add(host, "auto-skip "+time.Now().Format("2006-01-02"))
+	reply, usable := send(up2, hello, plan.Fallback)
 	switch {
-	case err != nil:
-		logx.Info.Printf("cannot save %s to blacklist: %v", host, err)
-	case added: // several connections to one host fail together: announce it once
-		logx.Info.Printf("AUTO-SKIP %s: works only without splitting, added to blacklist", host)
-		if p.OnSkip != nil {
-			p.OnSkip(host)
+	case reply == nil:
+		up2.Close()
+		return nil, nil, "", fmt.Errorf("NO REPLY with or without the bypass (blocked or down)")
+	case isAlert(reply):
+		// the server refuses either way (for example an unsupported TLS version): not a DPI effect, nothing to learn
+		return up2, reply, ModeDirect, nil
+	case !usable:
+		up2.Close()
+		return nil, nil, "", fmt.Errorf("no usable reply")
+	}
+
+	mode := ModeDirect
+	if plan.Fallback == policy.Split {
+		mode = ModeBypass
+	}
+	if plan.Learn != policy.Unknown {
+		persisted, err := p.pol.Observe(host, plan.Learn)
+		switch {
+		case err != nil:
+			logx.Info.Printf("cannot save what was learned about %s: %v", host, err)
+		case persisted:
+			if plan.Learn == policy.NoBypass {
+				logx.Info.Printf("AUTO-SKIP %s: works only without the bypass, added to the never-bypass list", host)
+			} else {
+				logx.Info.Printf("AUTO-BYPASS %s: needs the bypass, added to the bypass list", host)
+			}
+			if p.OnLearn != nil {
+				p.OnLearn(host, plan.Learn)
+			}
+		default:
+			logx.Debug.Printf("%s: %s worked after %s failed (%s evidence, not yet persisted)", host, name(plan.Fallback), name(plan.First), plan.Learn)
+		}
+		if plan.Learn == policy.NoBypass {
+			mode = ModeAutoSkip
+		} else {
+			mode = ModeAutoBypass
 		}
 	}
-	return up2, reply, ModeAutoSkip, nil
+	return up2, reply, mode, nil
 }

@@ -13,6 +13,7 @@ import (
 	"dpi/internal/blacklist"
 	"dpi/internal/logx"
 	"dpi/internal/notify"
+	"dpi/internal/policy"
 	"dpi/internal/proxy"
 	"dpi/internal/settings"
 	"dpi/internal/stats"
@@ -22,19 +23,20 @@ import (
 const SteamURL = "https://store.steampowered.com"
 
 type App struct {
-	Version  string
-	Dir      string // where the exe, logs and blacklist live
-	Addr     string
-	Started  time.Time
-	BL       *blacklist.List
-	Proxy    *proxy.Proxy
-	Stats    *stats.Store
-	Settings *settings.Store
-	LANAddrs func() []string // addresses to share on: the PC's private LAN addresses unless a test swaps it
+	Version   string
+	Dir       string // where the exe, logs and blacklist live
+	Addr      string
+	Started   time.Time
+	Policy    *policy.Policy // what is known about each site (NO_BYPASS / NEEDS_BYPASS) and how unknown sites are handled
+	Proxy     *proxy.Proxy
+	Stats     *stats.Store
+	Settings  *settings.Store
+	Migration Migration       // what the data migration at startup found and did
+	LANAddrs  func() []string // addresses to share on: the PC's private LAN addresses unless a test swaps it
 
-	notice       skipNotice
-	noticeWindow time.Duration
-	send         func(title, msg string) // desktop notification; replaced in tests
+	skipN, bypassN *notice // batched "learned" notifications, one per kind of decision
+	noticeWindow   time.Duration
+	send           func(title, msg string) // desktop notification; replaced in tests
 
 	mu       sync.Mutex
 	on       bool
@@ -48,14 +50,23 @@ func New(dir, addr, version string) *App {
 	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{}),
 		noticeWindow: skipNoticeWindow, send: notify.Send}
 	a.LANAddrs = lanIPs
-	a.BL = blacklist.New(filepath.Join(dir, "blacklist.txt"))
-	a.Stats = stats.New(filepath.Join(dir, "devices.json"))
 	a.Settings = settings.Load(filepath.Join(dir, "settings.json"))
+	a.Migration = migrate(dir, a.Settings) // before the lists are opened: they must see existing files as they are, and a new folder must stay empty
+	a.Migration.log()
+	a.skipN, a.bypassN = newNotices()
+	skip := blacklist.New(filepath.Join(dir, "blacklist.txt"), policy.SkipHeader)
+	bypass := blacklist.New(filepath.Join(dir, "bypass.txt"), policy.BypassHeader)
+	a.Policy = policy.New(skip, bypass, a.Mode)
+	a.Stats = stats.New(filepath.Join(dir, "devices.json"))
 	a.migrateLANMarker()
-	a.Proxy = proxy.New(addr, a.BL)
-	a.Proxy.OnSkip = func(host string) {
-		a.noteAutoSkip(host)
-		sysproxy.Refresh() // let apps re-read the PAC that now sends the host direct
+	a.Proxy = proxy.New(addr, a.Policy)
+	a.Proxy.OnLearn = func(host string, d policy.Decision) {
+		if d == policy.NeedsBypass {
+			a.noteAutoBypass(host)
+		} else {
+			a.noteAutoSkip(host)
+		}
+		sysproxy.Refresh() // let apps re-read the PAC (never-bypass sites go DIRECT)
 	}
 	a.Proxy.OnOpen = func(client, hostPort, mode string) uint64 {
 		return a.Stats.Open(stats.Event{Client: stats.ClientIP(client), Host: hostPort, Mode: mode})
@@ -82,7 +93,7 @@ func (a *App) LogPath() string { return filepath.Join(a.Dir, "dpi-info.log") }
 // DashboardURL is where the dashboard lives (also reachable by typing it in a browser).
 func (a *App) DashboardURL() string { return "http://" + a.Addr + "/" }
 
-// Start serves the proxy on ln, turns the bypass on and watches the blacklist file.
+// Start serves the proxy on ln, turns the bypass on and watches the site lists.
 func (a *App) Start(ln net.Listener) {
 	go http.Serve(ln, a.Proxy)
 	a.Enable()
@@ -95,7 +106,7 @@ func (a *App) Enable() {
 	defer a.mu.Unlock()
 	sysproxy.Set("http://" + a.Addr + "/proxy.pac")
 	a.on = true
-	logx.Info.Printf("bypass ON (%s), skip list: %v", a.Addr, a.BL.Items())
+	logx.Info.Printf("bypass ON (%s), mode %s, %d never-bypass and %d needs-bypass sites", a.Addr, a.Mode(), a.Policy.Skip.Len(), a.Policy.Bypass.Len())
 }
 
 // Disable gives the system its previous proxy setting back.
@@ -116,7 +127,7 @@ func (a *App) On() bool {
 func (a *App) Quit()                 { a.once.Do(func() { close(a.quit) }) }
 func (a *App) Done() <-chan struct{} { return a.quit }
 
-// watch reloads blacklist.txt when it changes so edits apply without a restart.
+// watch reloads blacklist.txt and bypass.txt when they change so edits apply without a restart.
 func (a *App) watch() {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
@@ -125,8 +136,8 @@ func (a *App) watch() {
 		case <-a.quit:
 			return
 		case <-t.C:
-			if a.BL.Reload() {
-				logx.Info.Printf("skip list reloaded: %v", a.BL.Items())
+			if a.Policy.Reload() {
+				logx.Info.Printf("site lists reloaded: %d never-bypass, %d needs-bypass", a.Policy.Skip.Len(), a.Policy.Bypass.Len())
 				if a.On() {
 					sysproxy.Refresh()
 				}
@@ -160,4 +171,24 @@ func check(proxyAddr, target string) (int, error) {
 	}
 	resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+// Mode is how unknown sites are handled; an empty or invalid setting means Always,
+// which is what the app did before modes existed.
+func (a *App) Mode() policy.Mode {
+	m, _ := policy.ParseMode(a.Settings.Get().DPIMode)
+	return m
+}
+
+// SetMode switches between Always and Learn. It only changes what happens for
+// sites nothing is known about: every learned decision stays as it is.
+func (a *App) SetMode(m policy.Mode) error {
+	if _, ok := policy.ParseMode(string(m)); !ok {
+		return fmt.Errorf("unknown mode %q (use \"always\" or \"learn\")", m)
+	}
+	if err := a.Settings.Update(func(s *settings.Settings) { s.DPIMode = string(m) }); err != nil {
+		return err
+	}
+	logx.Info.Printf("DPI mode: %s", m)
+	return nil
 }

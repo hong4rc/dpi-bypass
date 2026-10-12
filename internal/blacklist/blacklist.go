@@ -1,5 +1,5 @@
-// Package blacklist is a domain list backed by a text file (hosts that skip
-// the DPI bypass), safe for concurrent use.
+// Package blacklist is a domain list backed by a text file, safe for concurrent
+// use. The app keeps two of them: sites that never use the DPI bypass and sites that need it.
 package blacklist
 
 import (
@@ -10,15 +10,6 @@ import (
 	"sync"
 	"time"
 )
-
-const defaultContent = `# Domains that skip the DPI bypass (connect directly). One per line.
-# A domain also covers its subdomains. Changes are picked up automatically.
-# dpi-bypass also adds hosts here on its own when splitting breaks them.
-riotgames.com
-riotcdn.net
-leagueoflegends.com
-pvp.net
-`
 
 // Entry is one listed domain and the comment written after it, if any.
 type Entry struct {
@@ -33,10 +24,11 @@ type List struct {
 	mtime   time.Time
 }
 
-// New loads path, creating it with defaults when missing.
-func New(path string) *List {
+// New loads path. A missing file is created containing only header (comment
+// lines): no domain is ever pre-filled, every entry comes from learning or from the user.
+func New(path, header string) *List {
 	if _, err := os.Stat(path); err != nil {
-		os.WriteFile(path, []byte(defaultContent), 0o644)
+		os.WriteFile(path, []byte(header), 0o644)
 	}
 	l := &List{path: path}
 	l.Reload()
@@ -99,16 +91,26 @@ func (l *List) Items() []string {
 }
 
 // Match reports whether host equals a listed domain or is a subdomain of one.
+// Entries that are not a usable domain (a hand edit with spaces, a path) stay in
+// the file but never match anything.
 func (l *List) Match(host string) bool {
 	host = strings.ToLower(host)
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	for _, e := range l.entries {
+		if !Usable(e.Host) {
+			continue
+		}
 		if host == e.Host || strings.HasSuffix(host, "."+e.Host) {
 			return true
 		}
 	}
 	return false
+}
+
+// Usable reports whether s looks like a domain or address that can be matched.
+func Usable(s string) bool {
+	return s != "" && !strings.ContainsAny(s, " \t/\\#")
 }
 
 // Add appends host (with a note) to the file and the in-memory list. It reports
@@ -167,4 +169,28 @@ func (l *List) Remove(host string) error {
 	l.entries = entries
 	l.mu.Unlock()
 	return nil
+}
+
+// Len is the number of entries.
+func (l *List) Len() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.entries)
+}
+
+// Backup copies the file to path+suffix unless that copy already exists (an
+// earlier backup is never overwritten). It reports whether it made one.
+func (l *List) Backup(suffix string) (bool, error) {
+	dst := l.path + suffix
+	if _, err := os.Stat(dst); err == nil {
+		return false, nil
+	}
+	data, err := os.ReadFile(l.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, os.WriteFile(dst, data, 0o644)
 }

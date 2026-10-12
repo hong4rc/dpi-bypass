@@ -7,12 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"dpi/internal/blacklist"
+	"dpi/internal/policy"
 )
 
 type openEvent struct {
@@ -163,8 +162,7 @@ func TestOnClientSeesTheUserAgentOfPACFetchesAndConnects(t *testing.T) {
 }
 
 func TestOnPACAndFallbackRouting(t *testing.T) {
-	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
-	p := New("127.0.0.1:18080", bl)
+	p := New("127.0.0.1:18080", newPolicy(t, policy.Always))
 	var pacClients []string
 	p.OnPAC = func(client string) { pacClients = append(pacClients, client) }
 
@@ -221,8 +219,7 @@ func TestNamesThatResolveToALocalAddressAreNeverSplit(t *testing.T) {
 	}()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 
-	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
-	p := New("127.0.0.1:0", bl)
+	p := New("127.0.0.1:0", newPolicy(t, policy.Always))
 	p.TLSPorts[port] = true // SplitPrivate stays off, as in the real app
 	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)

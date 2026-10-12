@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dpi/internal/blacklist"
+	"dpi/internal/policy"
 )
 
 // fakeHello builds a TLS handshake record whose ClientHello length field is consistent.
@@ -65,28 +66,47 @@ func TestReadHelloKeepsNonTLSIntact(t *testing.T) {
 	}
 }
 
-func TestPACSendsBlacklistDirect(t *testing.T) {
-	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
+func TestPACSendsNeverBypassSitesDirectAndEverythingElseThroughTheProxy(t *testing.T) {
+	pol := newPolicy(t, policy.Always)
+	pol.SetState("never.example", policy.NoBypass, "test")
+	pol.SetState("needs.example", policy.NeedsBypass, "test")
 	rec := httptest.NewRecorder()
-	New("127.0.0.1:18080", bl).ServeHTTP(rec, httptest.NewRequest("GET", "/proxy.pac", nil))
+	New("127.0.0.1:18080", pol).ServeHTTP(rec, httptest.NewRequest("GET", "/proxy.pac", nil))
 	body := rec.Body.String()
-	for _, want := range []string{`"riotgames.com"`, "PROXY 127.0.0.1:18080", `return "DIRECT"`, "isPlainHostName", `isInNet(h,"192.168.0.0"`, "localhost|internal|lan"} {
+	for _, want := range []string{`"never.example"`, "PROXY 127.0.0.1:18080", `return "DIRECT"`, "isPlainHostName", `isInNet(h,"192.168.0.0"`, "localhost|internal|lan"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("PAC missing %q:\n%s", want, body)
 		}
 	}
+	if strings.Contains(body, "needs.example") {
+		t.Fatal("a site that needs the bypass must go through the proxy, not DIRECT")
+	}
 }
 
-// proxyServer starts the proxy; tlsPort is added to the ports it treats as TLS.
-func proxyServer(t *testing.T, tlsPort string) (*Proxy, *blacklist.List, string) {
+// newPolicy is a policy over two empty lists in a temp dir.
+func newPolicy(t *testing.T, mode policy.Mode) *policy.Policy {
 	t.Helper()
-	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
-	p := New("127.0.0.1:0", bl)
+	dir := t.TempDir()
+	skip := blacklist.New(filepath.Join(dir, "blacklist.txt"), policy.SkipHeader)
+	bypass := blacklist.New(filepath.Join(dir, "bypass.txt"), policy.BypassHeader)
+	return policy.New(skip, bypass, func() policy.Mode { return mode })
+}
+
+// proxyServer starts the proxy in Always mode; tlsPort is added to the ports it treats as TLS.
+func proxyServer(t *testing.T, tlsPort string) (*Proxy, *policy.Policy, string) {
+	t.Helper()
+	return proxyServerMode(t, tlsPort, policy.Always)
+}
+
+func proxyServerMode(t *testing.T, tlsPort string, mode policy.Mode) (*Proxy, *policy.Policy, string) {
+	t.Helper()
+	pol := newPolicy(t, mode)
+	p := New("127.0.0.1:0", pol)
 	p.TLSPorts[tlsPort] = true
 	p.SplitPrivate = true // the fake servers live on loopback
 	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)
-	return p, bl, strings.TrimPrefix(srv.URL, "http://")
+	return p, pol, strings.TrimPrefix(srv.URL, "http://")
 }
 
 // connectThroughProxy opens a CONNECT tunnel and returns the raw conn.
@@ -109,7 +129,7 @@ func connectThroughProxy(t *testing.T, proxyAddr, target string) net.Conn {
 }
 
 // A server that resets fragmented hellos must still work: the proxy retries
-// unsplit and remembers the host.
+// unsplit, and once that has happened twice it remembers the host as NO_BYPASS.
 func TestAutoSkipWhenSplitBreaksServer(t *testing.T) {
 	testAutoSkip(t, nil)
 }
@@ -150,9 +170,9 @@ func testAutoSkip(t *testing.T, fragReply []byte) {
 		}
 	}()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	p, bl, proxyAddr := proxyServer(t, port)
-	skipped := make(chan string, 1)
-	p.OnSkip = func(h string) { skipped <- h }
+	p, pol, proxyAddr := proxyServer(t, port)
+	learned := make(chan policy.Decision, 4)
+	p.OnLearn = func(_ string, d policy.Decision) { learned <- d }
 
 	exchange := func() string {
 		c := connectThroughProxy(t, proxyAddr, ln.Addr().String())
@@ -163,16 +183,22 @@ func testAutoSkip(t *testing.T, fragReply []byte) {
 	}
 
 	if got := exchange(); got != "OK" {
-		t.Fatalf("first connection: got %q, want OK via unsplit retry", got)
+		t.Fatalf("first connection: got %q, want OK via the direct retry", got)
 	}
-	if h := <-skipped; h != "127.0.0.1" || !bl.Match("127.0.0.1") {
-		t.Fatalf("host not learned: %q", h)
+	if pol.Decide("127.0.0.1") != policy.Unknown || pol.Skip.Len() != 0 {
+		t.Fatal("one failure followed by a working retry must not be written down yet")
 	}
 	if got := exchange(); got != "OK" {
 		t.Fatalf("second connection: got %q", got)
 	}
-	if fragmentedSeen.Load() != 1 {
-		t.Fatalf("learned host was split again (fragmented hellos seen: %d)", fragmentedSeen.Load())
+	if d := <-learned; d != policy.NoBypass || pol.Decide("127.0.0.1") != policy.NoBypass {
+		t.Fatalf("host not learned after the second confirmation: %v", d)
+	}
+	if got := exchange(); got != "OK" {
+		t.Fatalf("third connection: got %q", got)
+	}
+	if fragmentedSeen.Load() != 2 {
+		t.Fatalf("learned host was split again (fragmented hellos seen: %d, want the 2 that were needed as evidence)", fragmentedSeen.Load())
 	}
 }
 
@@ -216,7 +242,7 @@ func TestPrivateAddressesAreNotSplit(t *testing.T) {
 		c.Write([]byte("OK"))
 	}()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	p := New("127.0.0.1:0", blacklist.New(filepath.Join(t.TempDir(), "bl.txt")))
+	p := New("127.0.0.1:0", newPolicy(t, policy.Always))
 	p.TLSPorts[port] = true // SplitPrivate stays at its default (off)
 	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)
@@ -231,8 +257,7 @@ func TestPrivateAddressesAreNotSplit(t *testing.T) {
 }
 
 func TestPACAdvertisesTheAddressTheClientUsed(t *testing.T) {
-	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
-	p := New("127.0.0.1:18080", bl)
+	p := New("127.0.0.1:18080", newPolicy(t, policy.Always))
 	for host, want := range map[string]string{
 		"192.168.1.50:18080": "PROXY 192.168.1.50:18080",
 		"127.0.0.1:18080":    "PROXY 127.0.0.1:18080",

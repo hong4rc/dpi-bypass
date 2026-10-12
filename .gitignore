@@ -9,3 +9,5 @@ plans/
 *.exe~
 identify-cert.pem
 devices.json
+bypass.txt
+blacklist.txt.pre-modes.bak

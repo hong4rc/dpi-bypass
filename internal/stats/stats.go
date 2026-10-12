@@ -54,14 +54,15 @@ type Device struct {
 
 // Totals counts every connection since the app started (the event list is capped).
 type Totals struct {
-	Conns    int   `json:"conns"`
-	Open     int   `json:"open"` // connected right now
-	Bypass   int   `json:"bypass"`
-	Direct   int   `json:"direct"`
-	AutoSkip int   `json:"autoSkip"`
-	Failed   int   `json:"failed"`
-	Up       int64 `json:"up"`
-	Down     int64 `json:"down"`
+	Conns      int   `json:"conns"`
+	Open       int   `json:"open"` // connected right now
+	Bypass     int   `json:"bypass"`
+	Direct     int   `json:"direct"`
+	AutoSkip   int   `json:"autoSkip"`
+	AutoBypass int   `json:"autoBypass"`
+	Failed     int   `json:"failed"`
+	Up         int64 `json:"up"`
+	Down       int64 `json:"down"`
 }
 
 type Store struct {
@@ -198,6 +199,8 @@ func (s *Store) Open(e Event) uint64 {
 		s.totals.Direct++
 	case "auto-skip":
 		s.totals.AutoSkip++
+	case "auto-bypass":
+		s.totals.AutoBypass++
 	case "failed":
 		s.totals.Failed++
 	}

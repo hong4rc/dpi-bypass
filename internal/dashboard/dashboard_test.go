@@ -12,6 +12,7 @@ import (
 
 	"dpi/internal/app"
 	"dpi/internal/logx"
+	"dpi/internal/policy"
 	"dpi/internal/stats"
 )
 
@@ -59,7 +60,7 @@ func post(h http.Handler, method, path, body string) *httptest.ResponseRecorder 
 
 func TestOnlyThisPCCanOpenTheDashboard(t *testing.T) {
 	h, _ := newHandler(t)
-	for _, path := range []string{"/", "/api/state", "/api/devices", "/api/logs", "/api/skip"} {
+	for _, path := range []string{"/", "/api/state", "/api/devices", "/api/logs", "/api/sites"} {
 		if rec := do(h, req{method: "GET", path: path, remote: "192.168.1.77:4000"}); rec.Code != http.StatusForbidden {
 			t.Errorf("LAN client got %d for %s, want 403", rec.Code, path)
 		}
@@ -86,19 +87,22 @@ func TestDNSRebindingHostIsRejected(t *testing.T) {
 
 func TestChangesNeedTheCustomHeaderAndSameOrigin(t *testing.T) {
 	h, a := newHandler(t)
-	body := `{"host":"csrf.example.org"}`
+	body := `{"host":"csrf.example.org","state":"NO_BYPASS"}`
 
-	if rec := do(h, req{method: "POST", path: "/api/skip", body: body}); rec.Code != http.StatusForbidden {
+	if rec := do(h, req{method: "POST", path: "/api/sites", body: body}); rec.Code != http.StatusForbidden {
 		t.Errorf("POST without header got %d, want 403", rec.Code)
 	}
-	cross := req{method: "POST", path: "/api/skip", body: body, headers: map[string]string{"X-Requested-With": "dpi", "Origin": "http://evil.example.com"}}
+	cross := req{method: "POST", path: "/api/sites", body: body, headers: map[string]string{"X-Requested-With": "dpi", "Origin": "http://evil.example.com"}}
 	if rec := do(h, cross); rec.Code != http.StatusForbidden {
 		t.Errorf("cross-origin POST got %d, want 403", rec.Code)
 	}
-	if a.BL.Match("csrf.example.org") {
-		t.Fatal("a blocked request still changed the skip list")
+	if rec := do(h, req{method: "POST", path: "/api/mode", body: `{"mode":"learn"}`}); rec.Code != http.StatusForbidden {
+		t.Errorf("mode change without the header got %d, want 403", rec.Code)
 	}
-	same := req{method: "POST", path: "/api/skip", body: body, headers: map[string]string{"X-Requested-With": "dpi", "Origin": "http://127.0.0.1:18080"}}
+	if a.Policy.Decide("csrf.example.org") != policy.Unknown || a.Mode() != policy.Always {
+		t.Fatal("a blocked request still changed something")
+	}
+	same := req{method: "POST", path: "/api/sites", body: body, headers: map[string]string{"X-Requested-With": "dpi", "Origin": "http://127.0.0.1:18080"}}
 	if rec := do(h, same); rec.Code != http.StatusOK {
 		t.Errorf("same-origin POST got %d: %s", rec.Code, rec.Body)
 	}
@@ -128,39 +132,6 @@ func TestIndexAndState(t *testing.T) {
 	}
 	if s.Version != "test" || s.On || s.LAN.Enabled || s.LAN.URLs == nil || s.Addr != "127.0.0.1:18080" {
 		t.Fatalf("state: %+v", s)
-	}
-}
-
-func TestSkipListAPI(t *testing.T) {
-	h, a := newHandler(t)
-
-	rec := post(h, "POST", "/api/skip", `{"host":"  HTTPS://Game.Example.org:443/login?x=1 "}`)
-	if rec.Code != 200 || !a.BL.Match("game.example.org") {
-		t.Fatalf("add: %d %s", rec.Code, rec.Body)
-	}
-	var entries []struct{ Host, Note string }
-	json.Unmarshal(get(h, "/api/skip").Body.Bytes(), &entries)
-	found := false
-	for _, e := range entries {
-		if e.Host == "game.example.org" && e.Note == "added in dashboard" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("entry missing or note wrong: %+v", entries)
-	}
-
-	if rec := post(h, "DELETE", "/api/skip?host=game.example.org", ""); rec.Code != 200 || a.BL.Match("game.example.org") {
-		t.Fatalf("remove: %d %s", rec.Code, rec.Body)
-	}
-	if !a.BL.Match("riotgames.com") {
-		t.Fatal("removing one domain removed another")
-	}
-	if rec := post(h, "POST", "/api/skip", `{"host":"   "}`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("empty host got %d", rec.Code)
-	}
-	if rec := post(h, "POST", "/api/skip", `not json`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("bad json got %d", rec.Code)
 	}
 }
 

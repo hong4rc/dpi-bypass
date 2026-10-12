@@ -6,15 +6,19 @@ It runs a tiny local proxy that splits the TLS ClientHello so your ISP's DPI can
 
 ## Install
 
-Download from [Releases](../../releases):
+Download from [Releases](../../releases). Each download is everything you need: the web pages are built into the program, there is nothing else to install.
 
-| OS | File |
-|---|---|
-| Windows | `dpi-bypass-windows-amd64.exe` (tray icon, no console) |
-| macOS | `dpi-bypass-macos-apple-silicon` / `dpi-bypass-macos-intel` (terminal, experimental) |
-| Linux | `dpi-bypass-linux-amd64` (terminal, GNOME auto-setup, experimental) |
+| OS | Download | Run |
+|---|---|---|
+| Windows | `dpi-bypass-windows-amd64.exe` | double-click it. A tray icon appears. Windows may warn because the file is not code-signed: **More info > Run anyway** |
+| macOS | `dpi-bypass-macos-apple-silicon.tar.gz` or `dpi-bypass-macos-intel.tar.gz` | extract, then `./dpi-bypass` in a terminal (experimental). If macOS blocks it: `xattr -d com.apple.quarantine dpi-bypass` |
+| Linux | `dpi-bypass-linux-amd64.tar.gz` | extract, then `./dpi-bypass` in a terminal (experimental) |
 
-Or build: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
+macOS and Linux are `.tar.gz` because a plain downloaded binary loses its "executable" permission; the archive keeps it. `SHA256SUMS.txt` lists the checksums.
+
+Its settings, lists and logs are saved next to the program (see "Files" below). If that folder is read-only, they go to your user config folder instead (`%AppData%\dpi-bypass` on Windows), so nothing is silently lost.
+
+Or build it yourself: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
 
 ## Use (Windows)
 
@@ -31,11 +35,11 @@ For the things that need room to read or edit. Dark Tokyo Night theme, light the
 
 | Tab | What it shows |
 |---|---|
-| Overview | on/off, counters (including connections open right now), **Test Steam connection** with the result shown inline, sharing address with phone steps |
+| Overview | on/off, the **DPI mode** (Always or Learn), counters (including connections open right now), **Test Steam connection** with the result shown inline, sharing address with phone steps |
 | Devices | **Phone setup** (proxy address with a Copy button and a check that it answers, plus a QR code to identify a phone) and who uses the proxy: name, address, MAC, last seen, traffic. Click a name to rename it |
-| Activity | recent connections: bypassed, direct, auto-skipped, failed, with a one-click **Skip** |
+| Activity | recent connections: bypassed, direct, auto-skipped, learned bypass, failed, with one-click **Skip** (never bypass) and **Bypass** (always bypass) |
 | Logs | live log with info/debug filters, search, pause, copy, clear |
-| Skip list | add and remove domains (no text editor needed) |
+| Sites | the two lists of what is known about sites, **Needs bypass** and **Never bypass**: add and remove entries (no text editor needed). Also shows where each entry came from |
 
 Only this PC can open the dashboard: other devices get a 403, the page must be opened as `127.0.0.1` or `localhost`, and every change needs a header other websites can't send.
 
@@ -64,20 +68,60 @@ Safety: only private LAN addresses can connect, and a device on the LAN cannot u
 - The PAC falls back to a direct connection, and only `https://` traffic to public sites is sent through the proxy. LAN addresses, plain names and local-only names (`.local`, `.lan`, `.internal` such as Docker's `host.docker.internal`, `.home.arpa`, `.localhost`, `.test`) always go direct, and the proxy never fragments a connection whose name resolves to a LAN address.
 - Still stuck? Run `dpi-bypass -restore`.
 
+## DPI modes: Always or Learn
+
+Choose in the dashboard (Overview > DPI mode). The mode only decides what happens for sites **nothing is known about yet**; it never changes what has been learned, so you can switch back and forth freely.
+
+| | Unknown site | Site known to need the bypass | Site known to work better without it |
+|---|---|---|---|
+| **Always** | bypass first; if that fails and a normal connection works, that is evidence it should connect directly | bypass | direct |
+| **Learn** | connect normally first; if that fails and the bypass works, that is evidence it needs the bypass | bypass | direct |
+
+Both modes read and write the same two lists, which are the only place anything is remembered:
+
+| State | Meaning | Stored in |
+|---|---|---|
+| `NO_BYPASS` | connect directly, never bypass. Wins over everything else, in both modes | `blacklist.txt` (the old skip list, same name, format and meaning) |
+| `NEEDS_BYPASS` | always use the bypass | `bypass.txt` (new, same format) |
+| `UNKNOWN` | nothing known: follow the mode | not stored at all |
+
+- **No spam:** visiting sites that work never writes anything. A site only appears in a list when the app has real evidence, or when you add it. Nothing is pre-filled, so a new install starts with empty lists.
+- **A hiccup is not evidence:** a decision is only written after the same failure-then-fix was seen **twice within 10 minutes**. A normal connection that works in between cancels the pending evidence. The connection itself is served either way; only the permanent note waits. What counts as a failure: no reply, a reset, or a timeout of the first attempt. A TLS alert from a server that gets an unfragmented hello is a real answer (the server refused), not a failure.
+- **A learned decision is not flipped by one contradiction:** for a site known to need the bypass, a failing bypass falls back to a direct connection for that one connection, and the list is left alone. Edit the list in the dashboard if a site really changed.
+- **Learn mode and the proxy:** every HTTPS request still goes through the proxy in Learn mode, because the proxy has to see a failure to learn from it. It just leaves unknown sites untouched until one fails.
+- You get **one** notification per batch of newly learned sites, for each kind of decision.
+
 ## A game or app breaks? (e.g. League of Legends)
 
-- **Automatic:** if a site gets no reply (or a TLS alert) with the split hello but works without it, the app retries without splitting and adds the host to the skip list. You get **one** notification per batch of newly skipped sites, never one per connection.
-- **Manual:** add domains in the dashboard's Skip list, or in `blacklist.txt` next to the exe. A domain also covers its subdomains. Edits apply within 2 seconds, no restart.
+- **Automatic:** in Always mode the app learns `NO_BYPASS` when the bypass keeps breaking a site that works normally. Check the **Sites** tab, and use Learn mode if you would rather start from a normal connection.
+- **Manual:** add the domain as **Never bypass** in the dashboard's Sites tab (or one per line in `blacklist.txt`). A domain also covers its subdomains. Edits to either file apply within 2 seconds, no restart.
 
-## Files next to the exe
+## Upgrading from an earlier version (data migration)
+
+On the first start of this version the app migrates its data folder once. It is safe to run again: the result is recorded as `schema` in `settings.json` and a folder at the current version is never touched.
+
+| Before | After |
+|---|---|
+| `blacklist.txt` entries (the "skip list": connect directly) | the same file, **unchanged**, now meaning `NO_BYPASS`. Nothing is rewritten, converted or deleted |
+| no "needs bypass" data existed | `bypass.txt` starts **empty**: nothing is invented, it fills from real evidence or from you |
+| no `dpiMode` | `dpiMode: "always"`, which is what the app did before. A mode you already chose is never changed |
+
+- **Backup:** `blacklist.txt` is copied once to `blacklist.txt.pre-modes.bak`. An existing backup is never overwritten.
+- **Ambiguous records:** entries are labelled only by their notes: `auto-skip ...` = learned by the app, `added in dashboard` = you, anything else (no note) = `existing`, origin unknown. Earlier versions pre-filled four Riot/League of Legends domains without a note; on an existing install they are kept as `NO_BYPASS` (dropping them could silently break League of Legends again) and shown as `existing` so you can remove them. A new install is not pre-filled. Lines that are not a usable domain (for example with spaces) are left in the file, reported in the log, and never match anything.
+- **If the migration fails** (for example the backup cannot be written) nothing is changed and it is retried at the next start; the existing skip list keeps working meanwhile. The log line `data migrated to DPI modes: ...` (or `did not finish`) in `dpi-info.log` says what happened.
+- **Roll back:** copy `blacklist.txt.pre-modes.bak` over `blacklist.txt` and delete the `schema` line in `settings.json`. An older version simply reads the unchanged `blacklist.txt` and ignores `bypass.txt` and the new settings.
+
+## Files (next to the program)
 
 | File | Content |
 |---|---|
-| `blacklist.txt` | the skip list (also editable in the dashboard) |
-| `settings.json` | saved choices, for example `{"lanSharing": true}` |
+| `blacklist.txt` | sites that never use the bypass (`NO_BYPASS`), also editable in the dashboard |
+| `bypass.txt` | sites that need the bypass (`NEEDS_BYPASS`), also editable in the dashboard |
+| `blacklist.txt.pre-modes.bak` | copy of `blacklist.txt` made once when migrating from an earlier version |
+| `settings.json` | saved choices, for example `{"lanSharing": true, "dpiMode": "learn", "schema": 2}` |
 | `identify-cert.pem` | the identify page's self-signed certificate and key (only for that page; delete it and a new one is made) |
 | `devices.json` | names you gave to devices and what phones reported on the identify page |
-| `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `NO REPLY` (recreated on every start) |
+| `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `AUTO-BYPASS`, `NO REPLY` (recreated on every start) |
 | `dpi-debug.log` | everything: every CONNECT, timing, bytes (recreated on every start) |
 
 "Clear log" (tray or dashboard) empties both log files.
@@ -96,4 +140,4 @@ just run                # run from source with console output
 go test ./...
 ```
 
-Layout: `cmd/dpi-bypass` (entry), `internal/proxy` (split + auto-skip + PAC), `internal/dashboard` (web UI + API), `internal/stats` (devices, identities, activity), `internal/identify` (HTTPS identify page), `internal/blacklist`, `internal/settings`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows icon and menu), `internal/autostart`, `internal/app`, `internal/notify`, `internal/logx`.
+Layout: `cmd/dpi-bypass` (entry), `internal/policy` (modes, decisions, evidence), `internal/proxy` (split, retries, PAC), `internal/dashboard` (web UI + API), `internal/stats` (devices, identities, activity), `internal/identify` (HTTPS identify page), `internal/blacklist`, `internal/settings`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows icon and menu), `internal/autostart`, `internal/app`, `internal/notify`, `internal/logx`.

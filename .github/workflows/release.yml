@@ -15,23 +15,45 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: build all targets
+
+      - name: test
+        run: go test ./...
+
+      - name: build and package
         env:
           CGO_ENABLED: "0"
         run: |
           v=${GITHUB_REF_NAME}
-          mkdir dist
-          build() { # os arch outfile extra-ldflags
-            GOOS=$1 GOARCH=$2 go build -ldflags "$4 -s -w -X main.version=$v" -o "dist/$3" ./cmd/dpi-bypass
+          mkdir -p dist work
+          # The Windows exe is self-contained (web pages are embedded, no DLLs to install),
+          # so it is published as the bare .exe.
+          GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w -X main.version=$v" \
+            -o dist/dpi-bypass-windows-amd64.exe ./cmd/dpi-bypass
+          # macOS and Linux binaries are published as .tar.gz: a plain download loses the
+          # executable bit, an archive keeps it. Each holds the binary and the README.
+          pack() { # os arch name
+            d=work/$3; mkdir -p "$d"
+            GOOS=$1 GOARCH=$2 go build -ldflags "-s -w -X main.version=$v" -o "$d/dpi-bypass" ./cmd/dpi-bypass
+            cp README.md "$d/"
+            chmod 755 "$d/dpi-bypass"
+            tar -C work -czf "dist/$3.tar.gz" "$3"
           }
-          build windows amd64 dpi-bypass-windows-amd64.exe "-H=windowsgui"
-          build darwin  amd64 dpi-bypass-macos-intel ""
-          build darwin  arm64 dpi-bypass-macos-apple-silicon ""
-          build linux   amd64 dpi-bypass-linux-amd64 ""
-          cd dist && sha256sum * > SHA256SUMS.txt
+          pack darwin arm64 dpi-bypass-macos-apple-silicon
+          pack darwin amd64 dpi-bypass-macos-intel
+          pack linux  amd64 dpi-bypass-linux-amd64
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ls -l dist
+
+      - name: archives keep the executable bit
+        run: |
+          for f in dist/*.tar.gz; do
+            tar -tvzf "$f" | grep -E '^-rwx.* dpi-bypass-[a-z0-9-]+/dpi-bypass$' >/dev/null \
+              || { echo "missing executable bit in $f"; exit 1; }
+          done
+
       - name: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "Windows build has a tray icon (no console). macOS and Linux builds run in a terminal and are experimental. See the README."
+            --notes "Windows: download the .exe and double-click it (a tray icon appears; Windows may warn because the file is not code-signed: More info > Run anyway). macOS and Linux: extract the .tar.gz and run ./dpi-bypass in a terminal (experimental; on macOS you may need: xattr -d com.apple.quarantine dpi-bypass). See the README."

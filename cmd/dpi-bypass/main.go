@@ -58,7 +58,8 @@ func main() {
 		os.Exit(1)
 	}
 	exe, _ := os.Executable()
-	dir := filepath.Dir(exe)
+	cfg, _ := os.UserConfigDir()
+	dir := dataDir(filepath.Dir(exe), cfg) // next to the exe, or %AppData%\dpi-bypass if that folder is read-only
 	logx.Init(dir)
 
 	a := app.New(dir, addr, version)

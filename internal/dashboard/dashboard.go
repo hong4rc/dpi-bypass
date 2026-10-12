@@ -40,9 +40,10 @@ func New(a *app.App) http.Handler {
 	mux.HandleFunc("GET /api/logs", h.logs)
 	mux.HandleFunc("GET /api/logs/stream", h.logStream)
 	mux.HandleFunc("POST /api/logs/clear", h.clearLogs)
-	mux.HandleFunc("GET /api/skip", h.skipList)
-	mux.HandleFunc("POST /api/skip", h.skipAdd)
-	mux.HandleFunc("DELETE /api/skip", h.skipRemove)
+	mux.HandleFunc("GET /api/sites", h.sitesList)
+	mux.HandleFunc("POST /api/sites", h.sitesSet)
+	mux.HandleFunc("DELETE /api/sites", h.sitesRemove)
+	mux.HandleFunc("POST /api/mode", h.setMode)
 	return guard(mux)
 }
 
@@ -130,7 +131,8 @@ type stateJSON struct {
 	UptimeSec   int64   `json:"uptimeSec"`
 	Addr        string  `json:"addr"`
 	Totals      any     `json:"totals"`
-	SkipCount   int     `json:"skipCount"`
+	SiteCount   int     `json:"siteCount"`
+	Mode        string  `json:"mode"` // "always" or "learn"
 	DeviceCount int     `json:"deviceCount"`
 }
 
@@ -151,7 +153,8 @@ func (h *handler) snapshot() stateJSON {
 		UptimeSec:   int64(time.Since(h.a.Started).Seconds()),
 		Addr:        h.a.Addr,
 		Totals:      h.a.Stats.Totals(),
-		SkipCount:   len(h.a.BL.Entries()),
+		SiteCount:   h.a.Policy.Skip.Len() + h.a.Policy.Bypass.Len(),
+		Mode:        string(h.a.Mode()),
 		DeviceCount: len(h.a.Stats.Devices()),
 	}
 }
@@ -262,40 +265,6 @@ func (h *handler) logStream(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
-}
-
-func (h *handler) skipList(w http.ResponseWriter, r *http.Request) { writeJSON(w, h.a.BL.Entries()) }
-
-func (h *handler) skipAdd(w http.ResponseWriter, r *http.Request) {
-	var b struct{ Host string }
-	if !readJSON(w, r, &b) {
-		return
-	}
-	host := CleanHost(b.Host)
-	if host == "" {
-		fail(w, http.StatusBadRequest, "enter a domain such as example.com")
-		return
-	}
-	if _, err := h.a.BL.Add(host, "added in dashboard"); err != nil {
-		fail(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	logx.Info.Printf("skip list: added %s from the dashboard", host)
-	writeJSON(w, h.a.BL.Entries())
-}
-
-func (h *handler) skipRemove(w http.ResponseWriter, r *http.Request) {
-	host := CleanHost(r.URL.Query().Get("host"))
-	if host == "" {
-		fail(w, http.StatusBadRequest, "missing host")
-		return
-	}
-	if err := h.a.BL.Remove(host); err != nil {
-		fail(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	logx.Info.Printf("skip list: removed %s from the dashboard", host)
-	writeJSON(w, h.a.BL.Entries())
 }
 
 func limit(r *http.Request, def, max int) int {

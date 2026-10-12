@@ -61,9 +61,9 @@ section{display:none}section.active{display:block}
 .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));margin-top:14px}
 .card{background:var(--s1);border-radius:14px;padding:18px 20px}
 .row{display:flex;align-items:center;gap:12px;justify-content:space-between}
-.stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(125px,1fr))}
+.stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(138px,1fr))}
 .stat{background:var(--s1);border-radius:14px;padding:14px 16px}
-.stat b{display:block;font-size:24px;font-weight:700;color:var(--text);letter-spacing:-.02em}
+.stat b{display:block;font-size:22px;font-weight:700;color:var(--text);letter-spacing:-.02em;white-space:nowrap}
 .stat span{color:var(--muted);font-size:12px}
 .stat.good b{color:var(--green)}.stat.bad b{color:var(--red)}.stat.warn b{color:var(--yellow)}
 
@@ -102,6 +102,8 @@ input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
 table{width:100%;border-collapse:collapse}
 th,td{padding:10px 14px;text-align:left;vertical-align:middle}
 th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding-top:14px}
+.tablewrap td,.tablewrap th{white-space:nowrap}
+.tablewrap td.wrap{white-space:normal;word-break:break-word;min-width:220px}
 tbody tr{transition:background .1s}
 tbody tr:hover{background:var(--hover)}
 tbody tr+tr td{box-shadow:inset 0 1px 0 rgba(128,140,200,.07)}
@@ -110,6 +112,7 @@ tbody tr+tr td{box-shadow:inset 0 1px 0 rgba(128,140,200,.07)}
 .badge{display:inline-block;padding:1px 9px;border-radius:6px;font-size:11px;font-weight:700;background:var(--s3);color:var(--dim)}
 .badge.bypass{background:var(--ok-bg);color:var(--green)}
 .badge.auto-skip{background:var(--warn-bg);color:var(--yellow)}
+.badge.auto-bypass,.badge.learned-n{background:var(--accent-bg);color:var(--accent)}
 .badge.failed{background:var(--bad-bg);color:var(--red)}
 .badge.open{background:var(--accent-bg);color:var(--accent)}
 .live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--s3);margin-right:9px}
@@ -143,7 +146,11 @@ li{margin:3px 0}
 #logbox{background:var(--deep);border-radius:14px;height:60vh;overflow:auto;padding:12px 16px;font-size:12.5px;line-height:1.6}
 #logbox div{white-space:pre-wrap;word-break:break-all}
 .l-bad{color:var(--red)}.l-warn{color:var(--yellow)}.l-debug{color:var(--muted)}
-#skipInput{flex:1;min-width:260px;max-width:480px}
+#siteInput{flex:1;min-width:240px;max-width:420px}
+h3{margin:24px 0 8px;font-size:13px;color:var(--dim)}
+.mode{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:10px;background:var(--s2);margin:8px 0;cursor:pointer}
+.mode:has(input:checked){background:var(--accent-bg)}
+.mode input{margin-top:5px;accent-color:var(--accent)}
 #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--s3);color:var(--text);padding:10px 18px;border-radius:12px;opacity:0;pointer-events:none;transition:all .2s;max-width:90vw;z-index:10;box-shadow:0 6px 24px rgba(0,0,0,.35)}
 #toast.show{opacity:1;transform:translateX(-50%)}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
@@ -164,7 +171,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
       <button role="tab" data-tab="devices" aria-selected="false">Devices<span class="n" id="nDevices">0</span></button>
       <button role="tab" data-tab="activity" aria-selected="false">Activity</button>
       <button role="tab" data-tab="logs" aria-selected="false">Logs</button>
-      <button role="tab" data-tab="skip" aria-selected="false">Skip list<span class="n" id="nSkip">0</span></button>
+      <button role="tab" data-tab="sites" aria-selected="false">Sites<span class="n" id="nSites">0</span></button>
     </nav>
   </div>
 </header>
@@ -183,6 +190,15 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
         <span class="muted" id="testHint">opens store.steampowered.com through the bypass</span>
       </div>
       <div class="result" id="testResult"></div>
+    </div>
+
+    <div class="card">
+      <h2>DPI mode</h2>
+      <p>How sites that nothing is known about are handled. What the app has learned about sites is kept in both modes.</p>
+      <div id="modes">
+        <label class="mode"><input type="radio" name="mode" value="always"><span><b>Always</b><br><span class="muted">Bypass by default. A site only connects directly once it is known to work better that way.</span></span></label>
+        <label class="mode"><input type="radio" name="mode" value="learn"><span><b>Learn</b><br><span class="muted">Connect normally first. A site only gets the bypass after normal connections failed and the bypass fixed them, twice.</span></span></label>
+      </div>
     </div>
 
     <div class="card">
@@ -222,10 +238,11 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
       <option value="bypass">Bypassed</option>
       <option value="direct">Direct</option>
       <option value="auto-skip">Auto-skipped</option>
+      <option value="auto-bypass">Learned bypass</option>
       <option value="failed">Failed</option>
     </select>
     <input type="text" id="actSearch" placeholder="Filter by site or device">
-    <span class="muted">Newest first. "Skip" sends a site direct from now on.</span>
+    <span class="muted">Newest first. "Skip" never bypasses a site from now on, "Bypass" always does.</span>
   </div>
   <div id="activityBody"></div>
 </section>
@@ -243,13 +260,20 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
   <div id="logbox" aria-live="off"></div>
 </section>
 
-<section id="s-skip">
+<section id="s-sites">
   <div class="toolbar">
-    <input type="text" id="skipInput" placeholder="example.com  (a domain also covers its subdomains)">
-    <button class="btn" id="skipAdd">Add to skip list</button>
+    <input type="text" id="siteInput" placeholder="example.com  (a domain also covers its subdomains)">
+    <select id="siteState">
+      <option value="NO_BYPASS">Never bypass</option>
+      <option value="NEEDS_BYPASS">Needs bypass</option>
+    </select>
+    <button class="btn" id="siteAdd">Add</button>
   </div>
-  <p>Sites here connect directly, without the bypass. Use it for games or apps that break when the bypass is on. Sites that fail with the bypass are added automatically and marked <span class="badge auto-skip">auto</span>. Changes apply right away.</p>
-  <div id="skipBody" style="margin-top:14px"></div>
+  <p>What is known about sites. Sites that are not listed are handled by the DPI mode. <b>Never bypass</b> sites always connect directly, in both modes, and win over everything else. <b>Needs bypass</b> sites always use the bypass. The app adds sites here by itself only after it saw the same failure and fix twice; you can add and remove entries any time.</p>
+  <h3>Needs bypass</h3>
+  <div id="needsBody"></div>
+  <h3>Never bypass</h3>
+  <div id="noBody"></div>
 </section>
 
 </main>
@@ -299,6 +323,7 @@ function render(s) {
   if (lanKey !== lastLanKey) { lastLanKey = lanKey; setupData = null; if (tab === 'devices') loadSetup(); }
   document.title = 'DPI bypass - ' + (s.on ? 'on' : 'off');
   $('hdr').classList.toggle('on', s.on);
+  document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === s.mode; });
   $('pill').textContent = s.on ? 'on' : 'off';
   $('ver').textContent = s.version;
   $('topToggle').checked = s.on;
@@ -313,15 +338,16 @@ function render(s) {
   $('lanUrls').innerHTML = s.lan.urls.map(u => '<div class="url"><code>' + esc(u) + '</code><button class="btn ghost small" data-copy="' + esc(u) + '">Copy</button></div>').join('');
   $('dashUrl').textContent = location.origin + '/';
   $('nDevices').textContent = s.deviceCount;
-  $('nSkip').textContent = s.skipCount;
+  $('nSites').textContent = s.siteCount;
   $('up').textContent = 'running ' + dur(s.uptimeSec);
   const t = s.totals;
   $('stats').innerHTML = [
     ['Open now', t.open, t.open ? 'good' : ''], ['Connections', t.conns, ''], ['Bypassed', t.bypass, 'good'], ['Direct', t.direct, ''],
-    ['Auto-skipped', t.autoSkip, t.autoSkip ? 'warn' : ''], ['Failed', t.failed, t.failed ? 'bad' : ''],
+    ['Auto-skipped', t.autoSkip, t.autoSkip ? 'warn' : ''], ['Learned bypass', t.autoBypass, t.autoBypass ? 'good' : ''], ['Failed', t.failed, t.failed ? 'bad' : ''],
     ['Downloaded', fmtBytes(t.down), ''], ['Uploaded', fmtBytes(t.up), ''],
   ].map(([k, v, c]) => '<div class="stat ' + c + '"><b>' + esc(v) + '</b><span>' + esc(k) + '</span></div>').join('');
 }
+$('modes').addEventListener('change', guarded(async e => { render(await api('/api/mode', 'POST', { mode: e.target.value })); toast('Mode: ' + e.target.value); }));
 $('topToggle').addEventListener('change', guarded(async e => render(await api('/api/bypass', 'POST', { on: e.target.checked }))));
 $('lanToggle').addEventListener('change', guarded(async e => {
   render(await api('/api/lan', 'POST', { on: e.target.checked }));
@@ -423,7 +449,13 @@ document.addEventListener('click', guarded(async e => {
 }));
 
 /* ---------- activity ---------- */
-const modeLabel = { bypass: 'bypassed', direct: 'direct', 'auto-skip': 'auto-skipped', failed: 'failed' };
+const modeLabel = { bypass: 'bypassed', direct: 'direct', 'auto-skip': 'auto-skipped', 'auto-bypass': 'learned bypass', failed: 'failed' };
+const siteButtons = e => {
+  const h = esc(hostOf(e.host)), b = (st, label) => '<button class="btn ghost small" data-site="' + h + '" data-state="' + st + '">' + label + '</button> ';
+  if (e.mode === 'direct') return b('NEEDS_BYPASS', 'Bypass');
+  if (e.mode === 'failed') return b('NEEDS_BYPASS', 'Bypass') + b('NO_BYPASS', 'Skip');
+  return b('NO_BYPASS', 'Skip');
+};
 let events = [];
 async function loadActivity() { events = await api('/api/connections?limit=300'); renderActivity(); }
 function renderActivity() {
@@ -432,16 +464,17 @@ function renderActivity() {
   if (!rows.length) { $('activityBody').innerHTML = '<div class="empty">' + (events.length ? 'Nothing matches the filter.' : 'No connections yet. Open a website and it will show up here.') + '</div>'; return; }
   $('activityBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Time</th><th>Device</th><th>Site</th><th>Result</th><th>Size</th><th>Took</th><th></th></tr></thead><tbody>' +
     rows.map(e => '<tr><td class="muted">' + esc(new Date(e.time).toLocaleTimeString()) + '</td><td>' + esc(e.client === '127.0.0.1' ? 'this PC' : e.client) + '</td>' +
-      '<td>' + esc(e.host) + (e.err ? '<div class="muted" style="font-size:12px">' + esc(e.err) + '</div>' : '') + '</td>' +
+      '<td class="wrap">' + esc(e.host) + (e.err ? '<div class="muted" style="font-size:12px">' + esc(e.err) + '</div>' : '') + '</td>' +
       '<td><span class="badge ' + esc(e.mode) + '">' + esc(modeLabel[e.mode] || e.mode) + '</span>' + (e.open ? ' <span class="badge open">open</span>' : '') + '</td>' +
       '<td class="muted">' + (e.open ? '-' : esc(fmtBytes(e.down + e.up))) + '</td><td class="muted">' + (e.open ? 'open' : e.ms + ' ms') + '</td>' +
-      '<td style="text-align:right">' + (e.mode === 'direct' ? '' : '<button class="btn ghost small" data-skip="' + esc(hostOf(e.host)) + '">Skip</button>') + '</td></tr>').join('') + '</tbody></table></div>';
+      '<td style="text-align:right">' + siteButtons(e) + '</td></tr>').join('') + '</tbody></table></div>';
 }
 $('modeFilter').addEventListener('change', renderActivity);
 $('actSearch').addEventListener('input', renderActivity);
 document.addEventListener('click', guarded(async e => {
-  const b = e.target.closest('[data-skip]'); if (!b) return;
-  await api('/api/skip', 'POST', { host: b.dataset.skip }); toast(b.dataset.skip + ' now connects directly'); refreshState();
+  const b = e.target.closest('[data-site]'); if (!b) return;
+  await api('/api/sites', 'POST', { host: b.dataset.site, state: b.dataset.state });
+  toast(b.dataset.site + (b.dataset.state === 'NO_BYPASS' ? ' never uses the bypass now' : ' always uses the bypass now')); refreshState();
 }));
 
 /* ---------- logs ---------- */
@@ -454,7 +487,7 @@ function addLines(arr) {
 function lineClass(l) {
   if (l.level === 'debug') return 'l-debug';
   if (/FAIL|BLOCKED|NO REPLY/.test(l.text)) return 'l-bad';
-  if (/AUTO-SKIP|skip list/.test(l.text)) return 'l-warn';
+  if (/AUTO-SKIP|AUTO-BYPASS|site lists/.test(l.text)) return 'l-warn';
   return '';
 }
 function visibleLines() {
@@ -479,23 +512,28 @@ $('pauseBtn').addEventListener('click', () => { paused = !paused; $('pauseBtn').
 $('clearBtn').addEventListener('click', guarded(async () => { await api('/api/logs/clear', 'POST'); lines = []; renderLogs(); toast('Log cleared'); }));
 $('copyLog').addEventListener('click', guarded(async () => { await navigator.clipboard.writeText(visibleLines().map(l => l.text).join('\n')); toast('Log copied'); }));
 
-/* ---------- skip list ---------- */
-async function loadSkip() {
-  const list = await api('/api/skip');
-  if (!list.length) { $('skipBody').innerHTML = '<div class="empty">The skip list is empty.</div>'; return; }
-  $('skipBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Domain</th><th>Note</th><th></th></tr></thead><tbody>' +
-    list.map(e => '<tr><td>' + esc(e.host) + '</td><td>' + (/^auto-skip/.test(e.note) ? '<span class="badge auto-skip">auto</span> <span class="muted">' + esc(e.note.replace(/^auto-skip\s*/, '') || 'added automatically') + '</span>' : '<span class="muted">' + esc(e.note) + '</span>') + '</td>' +
-      '<td style="text-align:right"><button class="btn danger small" data-unskip="' + esc(e.host) + '">Remove</button></td></tr>').join('') + '</tbody></table></div>';
+/* ---------- sites ---------- */
+const sourceBadge = e => e.source === 'learned' ? '<span class="badge learned-n">learned</span>' : e.source === 'you' ? '<span class="badge">you</span>' : '<span class="badge">existing</span>';
+function siteTable(list, state, empty) {
+  if (!list.length) return '<div class="empty">' + empty + '</div>';
+  return '<div class="tablewrap"><table><thead><tr><th>Domain</th><th>Source</th><th></th></tr></thead><tbody>' +
+    list.map(e => '<tr><td>' + esc(e.host) + '</td><td>' + sourceBadge(e) + ' <span class="muted">' + esc(e.note) + '</span></td>' +
+      '<td style="text-align:right"><button class="btn danger small" data-unsite="' + esc(e.host) + '" data-state="' + state + '">Remove</button></td></tr>').join('') + '</tbody></table></div>';
 }
-const addSkip = guarded(async () => {
-  const v = $('skipInput').value.trim(); if (!v) return;
-  await api('/api/skip', 'POST', { host: v }); $('skipInput').value = ''; loadSkip(); refreshState();
+async function loadSites() {
+  const s = await api('/api/sites');
+  $('needsBody').innerHTML = siteTable(s.needsBypass, 'NEEDS_BYPASS', 'No site is known to need the bypass yet. Sites appear here when you add them, or after the app saw a normal connection fail and the bypass fix it twice.');
+  $('noBody').innerHTML = siteTable(s.noBypass, 'NO_BYPASS', 'No site is set to connect directly. Sites appear here when you add them, or after the app saw the bypass break a site that works without it, twice.');
+}
+const addSite = guarded(async () => {
+  const v = $('siteInput').value.trim(); if (!v) return;
+  await api('/api/sites', 'POST', { host: v, state: $('siteState').value }); $('siteInput').value = ''; loadSites(); refreshState();
 });
-$('skipAdd').addEventListener('click', addSkip);
-$('skipInput').addEventListener('keydown', e => { if (e.key === 'Enter') addSkip(); });
+$('siteAdd').addEventListener('click', addSite);
+$('siteInput').addEventListener('keydown', e => { if (e.key === 'Enter') addSite(); });
 document.addEventListener('click', guarded(async e => {
-  const b = e.target.closest('[data-unskip]'); if (!b) return;
-  await api('/api/skip?host=' + encodeURIComponent(b.dataset.unskip), 'DELETE'); loadSkip(); refreshState();
+  const b = e.target.closest('[data-unsite]'); if (!b) return;
+  await api('/api/sites?host=' + encodeURIComponent(b.dataset.unsite) + '&state=' + b.dataset.state, 'DELETE'); loadSites(); refreshState();
 }));
 
 /* ---------- refresh loop ---------- */
@@ -503,12 +541,12 @@ function refreshTab() {
   if (tab === 'devices') { loadDevices().catch(() => {}); if (!setupData) loadSetup(); }
   else if (tab === 'activity') loadActivity().catch(() => {});
   else if (tab === 'logs') renderLogs();
-  else if (tab === 'skip') loadSkip().catch(() => {});
+  else if (tab === 'sites') loadSites().catch(() => {});
 }
 setInterval(() => { refreshState(); if (tab === 'devices' || tab === 'activity') refreshTab(); }, 2000);
 refreshState();
 startLogs().catch(() => {});
-const start = location.hash.slice(1); if (['overview', 'devices', 'activity', 'logs', 'skip'].includes(start)) showTab(start);
+const start = location.hash.slice(1); if (['overview', 'devices', 'activity', 'logs', 'sites'].includes(start)) showTab(start);
 </script>
 </body>
 </html>
