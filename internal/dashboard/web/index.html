@@ -123,6 +123,21 @@ tbody tr+tr td{box-shadow:inset 0 1px 0 rgba(128,140,200,.07)}
 .url{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
 .url code{background:var(--s2);border-radius:8px;padding:4px 10px;word-break:break-all;color:var(--cyan,var(--accent))}
 ol{margin:8px 0 0 18px;padding:0;color:var(--dim)}
+/* phone setup card */
+.setup{background:var(--s1);border-radius:14px;padding:18px 20px;margin-bottom:16px}
+.setup h2{margin-bottom:2px}
+.setup .step{margin:16px 0 0}
+.setup .step b{color:var(--text)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 2px}
+.chip{background:var(--s2);color:var(--dim);border:0;border-radius:8px;padding:3px 11px;font:inherit;font-size:12px;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--accent-bg);color:var(--accent)}
+.addr{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.addr code{background:var(--s2);border-radius:8px;padding:4px 10px;word-break:break-all;color:var(--accent)}
+.ok-t{color:var(--green)}.bad-t{color:var(--red)}
+.qrrow{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:8px}
+.qrrow img{width:184px;height:184px;border-radius:10px;background:#fff;padding:6px;flex:none}
+.waiting{margin-top:12px;padding:9px 12px;border-radius:10px;background:var(--s2);color:var(--dim)}
+.waiting.done{background:var(--ok-bg);color:var(--green)}
 li{margin:3px 0}
 .empty{padding:34px;text-align:center;color:var(--muted);background:var(--s1);border-radius:14px}
 #logbox{background:var(--deep);border-radius:14px;height:60vh;overflow:auto;padding:12px 16px;font-size:12.5px;line-height:1.6}
@@ -196,6 +211,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
 
 <section id="s-devices">
   <div class="toolbar"><span class="muted">Devices that fetched the proxy address or used the proxy. Click a name to rename it.</span></div>
+  <div id="setupCard"></div>
   <div id="devicesBody"></div>
 </section>
 
@@ -279,6 +295,8 @@ async function refreshState() {
 }
 function render(s) {
   state = s;
+  const lanKey = s.lan.urls.join(',');                       // sharing turned on/off or the address changed
+  if (lanKey !== lastLanKey) { lastLanKey = lanKey; setupData = null; if (tab === 'devices') loadSetup(); }
   document.title = 'DPI bypass - ' + (s.on ? 'on' : 'off');
   $('hdr').classList.toggle('on', s.on);
   $('pill').textContent = s.on ? 'on' : 'off';
@@ -320,8 +338,64 @@ $('testBtn').addEventListener('click', guarded(async () => {
 }));
 
 /* ---------- devices ---------- */
+/* ---------- phone setup: copy the proxy address, optionally identify the phone by QR ---------- */
+let setupIdx = 0, setupData = null, showPacQR = false, lastIdentityAt = null, lastLanKey = '';
+async function loadSetup() {
+  try { setupData = await api('/api/phone-setup'); } catch (e) { setupData = null; }
+  renderSetup();
+}
+const reach = ok => ok ? '<span class="ok-t">&#10003; answers</span>' : '<span class="bad-t">&#10007; not answering</span>';
+function renderSetup() {
+  const box = $('setupCard');
+  if (!setupData || !setupData.enabled) {
+    box.innerHTML = '<div class="setup"><h2>Phone setup</h2><p>Turn on <b>Share with other devices</b> (Overview tab, or the tray menu) to set up a phone: you get an address to copy, and a QR code to tell the PC which phone it is.</p></div>';
+    return;
+  }
+  const items = setupData.items;
+  if (setupIdx >= items.length) setupIdx = 0;
+  const it = items[setupIdx];
+  const chips = items.length > 1
+    ? '<div class="muted" style="margin-top:8px">This PC has several addresses. Use the one on the same Wi-Fi as the phone:</div><div class="chips">' +
+      items.map((x, i) => '<button class="chip" data-setup="' + i + '" aria-pressed="' + (i === setupIdx) + '">' + esc(x.ip) + (x.primary ? ' (main)' : '') + '</button>').join('') + '</div>'
+    : '';
+  box.innerHTML = '<div class="setup"><h2>Phone setup</h2>' +
+    '<p>The phone must be on the same Wi-Fi as this PC (<b>' + esc(it.ip) + '</b>).</p>' + chips +
+
+    '<div class="step"><b>1. Proxy address</b> <span class="muted">paste it into the phone: Wi-Fi &gt; network &gt; Proxy &gt; Automatic (iPhone: Configure Proxy &gt; Automatic)</span>' +
+    '<div class="addr"><code>' + esc(it.pac) + '</code><button class="btn small" data-copy="' + esc(it.pac) + '">Copy</button> ' + reach(it.pacReachable) +
+    ' <button class="btn ghost small" id="togglePacQR">' + (showPacQR ? 'Hide QR' : 'Show QR') + '</button></div>' +
+    (showPacQR ? '<div class="qrrow"><img alt="QR code of the proxy address" src="/api/qr.svg?url=' + encodeURIComponent(it.pac) + '"><div class="muted">Scan it with the phone to get the address on the phone, then copy it from there into the proxy setting. A QR code can not change the proxy by itself.</div></div>' : '') +
+    '</div>' +
+
+    '<div class="step"><b>2. Identify the phone</b> <span class="muted">(optional: shows its real model, like SHARK PAR-A0)</span>' +
+    '<div class="qrrow"><img alt="QR code of the identify page" src="/api/qr.svg?url=' + encodeURIComponent(it.identify) + '"><div>' +
+    '<div class="muted">Scan with the phone camera, or open this address on the phone:</div>' +
+    '<div class="addr"><code>' + esc(it.identify) + '</code><button class="btn small" data-copy="' + esc(it.identify) + '">Copy</button> ' + reach(it.identifyReachable) + '</div>' +
+    '<ol><li>The browser warns the page is not private (the PC made its own certificate).</li><li>Tap <b>Advanced</b>, then <b>Proceed</b>. Once per phone.</li><li>The page shows <b>Done</b>, and the phone appears below with its real name.</li></ol>' +
+    '</div></div>' +
+    '<div class="waiting" id="idStatus">Waiting for a phone to identify itself...</div></div>' +
+    (it.pacReachable && it.identifyReachable ? '' : '<p class="bad-t" style="margin-top:12px">The PC could not reach its own address ' + esc(it.ip) + '. Check the firewall (Private networks) and that sharing is on.</p>') +
+    '</div>';
+}
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-setup]');
+  if (c) { setupIdx = +c.dataset.setup; renderSetup(); }
+  if (e.target.closest('#togglePacQR')) { showPacQR = !showPacQR; renderSetup(); }
+});
+// the newest identity time across devices; a later one means a phone just reported in
+function noticeIdentification(list) {
+  let newest = 0, who = '';
+  for (const d of list) for (const id of (d.identities || [])) { const t = new Date(id.at).getTime(); if (t > newest) { newest = t; who = id.label + ' (' + d.ip + ')'; } }
+  if (lastIdentityAt !== null && newest > lastIdentityAt) {
+    toast('Identified: ' + who);
+    const s = $('idStatus'); if (s) { s.textContent = '✓ Identified: ' + who; s.className = 'waiting done'; }
+  }
+  lastIdentityAt = newest;
+}
+
 async function loadDevices() {
   const list = await api('/api/devices');
+  noticeIdentification(list);
   if (!list.length) {
     $('devicesBody').innerHTML = '<div class="empty">No devices yet. This PC shows up after its first connection. For a phone, turn on <b>Share with other devices</b> on the Overview tab and enter the address on the phone.</div>'; return;
   }
@@ -329,8 +403,9 @@ async function loadDevices() {
     list.map(d => {
       // name you gave it > hostname > what it says it is (User-Agent) > unknown
       const agents = d.agents || [];
-      const title = d.name || (d.self ? 'This PC' : (d.hostname || agents[0] || 'Unknown device'));
-      const extra = [d.hostname, ...agents].filter(x => x && x !== title);
+      const ids = (d.identities || []).map(i => i.label).filter(Boolean);   // what the phone told us on the identify page
+      const title = d.name || (d.self ? 'This PC' : (ids[ids.length - 1] || d.hostname || agents[0] || 'Unknown device'));
+      const extra = [...ids, d.hostname, ...agents].filter(x => x && x !== title);
       const sub = extra.length ? '<div class="muted" style="font-size:12px">' + esc(extra.join(' · ')) + '</div>' : '';
       return '<tr><td><span class="live ' + (d.active ? 'active' : '') + '" title="' + (d.active ? 'active now' : 'idle') + '"></span>' +
         '<a href="#" data-rename="' + esc(d.ip) + '" data-name="' + esc(d.name) + '" title="' + esc(['Click to rename', ...(d.rawAgents || []).map(a => 'User-Agent: ' + a)].join('\n')) + '">' + esc(title) + '</a>' + sub + '</td>' +
@@ -425,7 +500,7 @@ document.addEventListener('click', guarded(async e => {
 
 /* ---------- refresh loop ---------- */
 function refreshTab() {
-  if (tab === 'devices') loadDevices().catch(() => {});
+  if (tab === 'devices') { loadDevices().catch(() => {}); if (!setupData) loadSetup(); }
   else if (tab === 'activity') loadActivity().catch(() => {});
   else if (tab === 'logs') renderLogs();
   else if (tab === 'skip') loadSkip().catch(() => {});

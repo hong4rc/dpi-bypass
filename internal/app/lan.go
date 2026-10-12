@@ -2,6 +2,8 @@ package app
 
 import (
 	"errors"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -9,8 +11,10 @@ import (
 	"sort"
 	"strings"
 
+	"dpi/internal/identify"
 	"dpi/internal/logx"
 	"dpi/internal/settings"
+	"dpi/internal/stats"
 )
 
 // legacyLANMarker is how earlier versions remembered that sharing was on.
@@ -104,6 +108,7 @@ func (a *App) EnableLAN() error {
 		return nil
 	}
 	_, port, _ := net.SplitHostPort(a.Addr)
+	var bound []string
 	for _, ip := range lanIPs() {
 		ln, err := net.Listen("tcp", net.JoinHostPort(ip, port))
 		if err != nil {
@@ -111,11 +116,13 @@ func (a *App) EnableLAN() error {
 			continue
 		}
 		a.lan = append(a.lan, ln)
+		bound = append(bound, ip)
 		go http.Serve(lanOnly{ln}, a.Proxy)
 	}
 	if len(a.lan) == 0 {
 		return errors.New("no LAN address found - is this PC connected to your Wi-Fi/router?")
 	}
+	a.startIdentify(bound, port)
 	a.saveLAN(true)
 	logx.Info.Printf("LAN sharing ON, devices can use: %v", a.lanURLs())
 	return nil
@@ -129,6 +136,10 @@ func (a *App) DisableLAN() {
 		ln.Close()
 	}
 	a.lan = nil
+	for _, ln := range a.identify {
+		ln.Close()
+	}
+	a.identify = nil
 	a.saveLAN(false)
 	logx.Info.Println("LAN sharing OFF")
 }
@@ -164,4 +175,54 @@ func isVirtual(name string) bool {
 		}
 	}
 	return false
+}
+
+// identifyPort is where the "identify this device" HTTPS page listens (the
+// proxy port is 18080; tests use port 0 and get a random one here too).
+const identifyPort = "18443"
+
+// startIdentify serves the identify page over HTTPS on the same LAN addresses.
+// The certificate is made fresh in memory: nothing secret is written to disk.
+func (a *App) startIdentify(ips []string, proxyPort string) {
+	port := identifyPort
+	if proxyPort == "0" {
+		port = "0"
+	}
+	var parsed []net.IP
+	for _, ip := range ips {
+		parsed = append(parsed, net.ParseIP(ip))
+	}
+	cert, err := identify.SelfSigned(parsed)
+	if err != nil {
+		logx.Info.Printf("identify page unavailable: %v", err)
+		return
+	}
+	srv := &http.Server{
+		ErrorLog: log.New(io.Discard, "", 0), // phones that refuse the certificate would otherwise spam errors
+		Handler: identify.New(func(client string, id stats.Identity) error {
+			ip := stats.ClientIP(client)
+			logx.Info.Printf("device %s identified itself: %s", ip, id.Describe())
+			return a.Stats.SetIdentity(ip, id)
+		}),
+	}
+	for _, ip := range ips {
+		raw, err := net.Listen("tcp", net.JoinHostPort(ip, port))
+		if err != nil {
+			logx.Info.Printf("identify page: cannot listen on %s: %v", ip, err)
+			continue
+		}
+		a.identify = append(a.identify, raw)
+		go srv.Serve(identify.TLSListener(lanOnly{raw}, cert))
+	}
+}
+
+// IdentifyURLs are the addresses of the identify page (empty when sharing is off).
+func (a *App) IdentifyURLs() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var urls []string
+	for _, ln := range a.identify {
+		urls = append(urls, "https://"+ln.Addr().String()+"/identify")
+	}
+	return urls
 }

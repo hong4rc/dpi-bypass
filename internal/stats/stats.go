@@ -1,10 +1,10 @@
 // Package stats remembers recent proxy connections and which devices used the
-// proxy, for the dashboard. Everything is in memory except device names.
+// proxy, for the dashboard. Everything is in memory except device names and
+// identities (devices.json).
 package stats
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"os"
 	"sort"
@@ -35,20 +35,21 @@ type Event struct {
 
 // Device is a client that fetched the PAC or used the proxy.
 type Device struct {
-	IP         string    `json:"ip"`
-	Name       string    `json:"name"`      // chosen by the user
-	Hostname   string    `json:"hostname"`  // from reverse DNS, often empty
-	MAC        string    `json:"mac"`       // only known for devices on the PC's own subnet
-	Agents     []string  `json:"agents"`    // what the device says it is (from User-Agent), e.g. "Android 14 · SM-S918B"
-	RawAgents  []string  `json:"rawAgents"` // the User-Agent headers as received, for troubleshooting
-	Self       bool      `json:"self"`
-	Active     bool      `json:"active"` // seen in the last 2 minutes
-	First      time.Time `json:"first"`
-	Last       time.Time `json:"last"`
-	Conns      int       `json:"conns"`
-	PACFetches int       `json:"pacFetches"`
-	Up         int64     `json:"up"`
-	Down       int64     `json:"down"`
+	IP         string     `json:"ip"`
+	Name       string     `json:"name"`       // chosen by the user
+	Hostname   string     `json:"hostname"`   // from reverse DNS, often empty
+	MAC        string     `json:"mac"`        // only known for devices on the PC's own subnet
+	Agents     []string   `json:"agents"`     // what the device says it is (from User-Agent), e.g. "Android 14 · SM-S918B"
+	RawAgents  []string   `json:"rawAgents"`  // the User-Agent headers as received, for troubleshooting
+	Identities []Identity `json:"identities"` // what the device reported on the identify page (real model)
+	Self       bool       `json:"self"`
+	Active     bool       `json:"active"` // seen in the last 2 minutes
+	First      time.Time  `json:"first"`
+	Last       time.Time  `json:"last"`
+	Conns      int        `json:"conns"`
+	PACFetches int        `json:"pacFetches"`
+	Up         int64      `json:"up"`
+	Down       int64      `json:"down"`
 }
 
 // Totals counts every connection since the app started (the event list is capped).
@@ -64,24 +65,20 @@ type Totals struct {
 }
 
 type Store struct {
-	mu        sync.Mutex
-	totals    Totals
-	nextID    uint64
-	open      map[uint64]string // id -> client, for connections still open
-	events    []Event
-	devices   map[string]*Device
-	names     map[string]string
-	namesPath string
+	mu      sync.Mutex
+	totals  Totals
+	nextID  uint64
+	open    map[uint64]string // id -> client, for connections still open
+	events  []Event
+	devices map[string]*Device
+	saved   map[string]*savedDevice // by IP: name and identities, kept in devices.json
+	path    string
 }
 
-// New loads saved device names from namesPath ("" keeps names in memory only).
-func New(namesPath string) *Store {
-	s := &Store{devices: map[string]*Device{}, names: map[string]string{}, open: map[uint64]string{}, namesPath: namesPath}
-	if namesPath != "" {
-		if b, err := os.ReadFile(namesPath); err == nil {
-			json.Unmarshal(b, &s.names)
-		}
-	}
+// New loads saved device names and identities from path (devices.json); "" keeps them in memory only.
+func New(path string) *Store {
+	s := &Store{devices: map[string]*Device{}, saved: map[string]*savedDevice{}, open: map[uint64]string{}, path: path}
+	s.load(path)
 	return s
 }
 
@@ -246,7 +243,12 @@ func (s *Store) Devices() []Device {
 		c := *d
 		c.Agents = append([]string{}, d.Agents...) // never nil in JSON, and not shared with the live record
 		c.RawAgents = append([]string{}, d.RawAgents...)
-		c.Name = s.names[c.IP]
+		if sd := s.saved[c.IP]; sd != nil {
+			c.Name = sd.Name
+			c.Identities = append([]Identity{}, sd.Identities...)
+		} else {
+			c.Identities = []Identity{}
+		}
 		c.Active = time.Since(c.Last) < activeWindow
 		out = append(out, c)
 	}
@@ -280,22 +282,14 @@ func (s *Store) Totals() Totals {
 	return s.totals
 }
 
-// SetName names a device ("" clears it) and saves all names.
+// SetName names a device ("" clears it) and saves it.
 func (s *Store) SetName(ip, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	name = strings.TrimSpace(name)
-	if name == "" {
-		delete(s.names, ip)
-	} else {
-		s.names[ip] = name
+	sd := s.savedFor(ip)
+	sd.Name = strings.TrimSpace(name)
+	if sd.Name == "" && len(sd.Identities) == 0 {
+		delete(s.saved, ip)
 	}
-	if s.namesPath == "" {
-		return nil
-	}
-	b, err := json.MarshalIndent(s.names, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(s.namesPath, b, 0o644)
+	return s.persist()
 }

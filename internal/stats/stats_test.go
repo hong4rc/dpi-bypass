@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -169,22 +170,99 @@ func TestEventsAreCapped(t *testing.T) {
 	}
 }
 
+// reload opens the store again, as a restart would, and returns a device's saved name and identities.
+func reload(t *testing.T, path, ip string) (string, []Identity) {
+	t.Helper()
+	s := New(path)
+	s.SeenPAC(ip) // a device only appears once it is seen
+	for _, d := range s.Devices() {
+		if d.IP == ip {
+			return d.Name, d.Identities
+		}
+	}
+	t.Fatalf("device %s missing", ip)
+	return "", nil
+}
+
 func TestNamesPersist(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "names.json")
+	path := filepath.Join(t.TempDir(), "devices.json")
 	s := New(path)
 	s.SeenPAC("192.168.1.50")
 	if err := s.SetName("192.168.1.50", " My Android "); err != nil {
 		t.Fatal(err)
 	}
-	if got := New(path).names["192.168.1.50"]; got != "My Android" {
-		t.Fatalf("name not persisted: %q", got)
+	if name, _ := reload(t, path, "192.168.1.50"); name != "My Android" {
+		t.Fatalf("name not persisted: %q", name)
 	}
 	if n := s.Devices()[0].Name; n != "My Android" {
 		t.Fatalf("Devices name %q", n)
 	}
 	s.SetName("192.168.1.50", "")
-	if got := New(path).names["192.168.1.50"]; got != "" {
-		t.Fatalf("name not cleared: %q", got)
+	if name, _ := reload(t, path, "192.168.1.50"); name != "" {
+		t.Fatalf("name not cleared: %q", name)
 	}
-	time.Sleep(10 * time.Millisecond) // let the background lookup finish before temp dir cleanup
+	time.Sleep(10 * time.Millisecond) // let the background lookups finish before temp dir cleanup
+}
+
+func TestIdentityIsStoredLabelledAndSurvivesARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "devices.json")
+	s := New(path)
+	err := s.SetIdentity("192.168.1.13", Identity{Model: "SHARK PAR-A0", Platform: "Android", PlatformVersion: "12.0.0", Mobile: true, Browser: "Google Chrome 154"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := s.Devices()[0].Identities
+	if len(ids) != 1 || ids[0].Label != "SHARK PAR-A0 · Android 12" || ids[0].At.IsZero() {
+		t.Fatalf("identity: %+v", ids)
+	}
+	if _, ids := reload(t, path, "192.168.1.13"); len(ids) != 1 || ids[0].Model != "SHARK PAR-A0" {
+		t.Fatalf("identity lost on restart: %+v", ids)
+	}
+	time.Sleep(10 * time.Millisecond)
+}
+
+func TestTheSameModelReportingAgainReplacesItsEntry(t *testing.T) {
+	s := New("")
+	s.SetIdentity("10.0.0.2", Identity{Model: "Pixel 7", Platform: "Android", PlatformVersion: "13.0.0"})
+	s.SetIdentity("10.0.0.2", Identity{Model: "Pixel 7", Platform: "Android", PlatformVersion: "14.0.0"})  // updated OS
+	s.SetIdentity("10.0.0.2", Identity{Model: "SM-S918B", Platform: "Android", PlatformVersion: "14.0.0"}) // a second phone behind the same router
+	ids := s.Devices()[0].Identities
+	if len(ids) != 2 || ids[0].Label != "Pixel 7 · Android 14" || ids[1].Label != "SM-S918B · Android 14" {
+		t.Fatalf("identities: %+v", ids)
+	}
+}
+
+func TestIdentityLabelWithoutAModel(t *testing.T) {
+	for name, tc := range map[string]struct {
+		id   Identity
+		want string
+	}{
+		"iphone safari (no client hints)": {Identity{UserAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15"}, "iPhone · iOS 17.2"},
+		"desktop chrome":                  {Identity{Platform: "Windows", PlatformVersion: "15.0.0", UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/154"}, "Windows PC"},
+		"model only":                      {Identity{Model: "Pixel 8"}, "Pixel 8"},
+		"nothing useful":                  {Identity{Platform: "Linux"}, "Linux"},
+	} {
+		if got := tc.id.Describe(); got != tc.want {
+			t.Errorf("%s: %q want %q", name, got, tc.want)
+		}
+	}
+}
+
+// The first version kept only names, in device-names.json.
+func TestOldNamesFileMovesIntoDevicesJSON(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "device-names.json")
+	os.WriteFile(legacy, []byte(`{"192.168.1.55": "Old name"}`), 0o644)
+
+	path := filepath.Join(dir, "devices.json")
+	if name, _ := reload(t, path, "192.168.1.55"); name != "Old name" {
+		t.Fatalf("legacy name not imported: %q", name)
+	}
+	if _, err := os.Stat(legacy); err == nil {
+		t.Fatal("legacy file should be removed after the move")
+	}
+	if name, _ := reload(t, path, "192.168.1.55"); name != "Old name" {
+		t.Fatalf("name not kept in devices.json: %q", name)
+	}
+	time.Sleep(10 * time.Millisecond)
 }

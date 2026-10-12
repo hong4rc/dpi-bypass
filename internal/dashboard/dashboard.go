@@ -32,6 +32,8 @@ func New(a *app.App) http.Handler {
 	mux.HandleFunc("POST /api/bypass", h.setBypass)
 	mux.HandleFunc("POST /api/lan", h.setLAN)
 	mux.HandleFunc("POST /api/test", h.test)
+	mux.HandleFunc("GET /api/phone-setup", h.phoneSetup)
+	mux.HandleFunc("GET /api/qr.svg", h.qr)
 	mux.HandleFunc("GET /api/devices", h.devices)
 	mux.HandleFunc("POST /api/devices/name", h.nameDevice)
 	mux.HandleFunc("GET /api/connections", h.connections)

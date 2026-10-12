@@ -35,18 +35,19 @@ type App struct {
 	noticeWindow time.Duration
 	send         func(title, msg string) // desktop notification; replaced in tests
 
-	mu   sync.Mutex
-	on   bool
-	lan  []net.Listener // extra listeners while sharing with other devices
-	quit chan struct{}
-	once sync.Once
+	mu       sync.Mutex
+	on       bool
+	lan      []net.Listener // extra listeners while sharing with other devices
+	identify []net.Listener // HTTPS "identify this device" listeners, up while sharing
+	quit     chan struct{}
+	once     sync.Once
 }
 
 func New(dir, addr, version string) *App {
 	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{}),
 		noticeWindow: skipNoticeWindow, send: notify.Send}
 	a.BL = blacklist.New(filepath.Join(dir, "blacklist.txt"))
-	a.Stats = stats.New(filepath.Join(dir, "device-names.json"))
+	a.Stats = stats.New(filepath.Join(dir, "devices.json"))
 	a.Settings = settings.Load(filepath.Join(dir, "settings.json"))
 	a.migrateLANMarker()
 	a.Proxy = proxy.New(addr, a.BL)

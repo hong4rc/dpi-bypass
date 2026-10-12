@@ -32,14 +32,16 @@ For the things that need room to read or edit. Dark Tokyo Night theme, light the
 | Tab | What it shows |
 |---|---|
 | Overview | on/off, counters (including connections open right now), **Test Steam connection** with the result shown inline, sharing address with phone steps |
-| Devices | who uses the proxy: name, address, MAC, last seen, traffic. Click a name to rename it |
+| Devices | **Phone setup** (proxy address with a Copy button and a check that it answers, plus a QR code to identify a phone) and who uses the proxy: name, address, MAC, last seen, traffic. Click a name to rename it |
 | Activity | recent connections: bypassed, direct, auto-skipped, failed, with a one-click **Skip** |
 | Logs | live log with info/debug filters, search, pause, copy, clear |
 | Skip list | add and remove domains (no text editor needed) |
 
 Only this PC can open the dashboard: other devices get a 403, the page must be opened as `127.0.0.1` or `localhost`, and every change needs a header other websites can't send.
 
-**Device names:** a device is named by you first, then by its hostname if the network knows it, then by what it says it is in its User-Agent (for example `Android 14 · SM-S918B` or `iPhone14,5 · iOS 17.2`). Hover a device name to see the raw User-Agent headers it sent; each distinct header is also written once to `dpi-debug.log` (`device 192.168.1.13 says: ...`). Chrome on Android and Safari hide the exact model in web traffic, so the model only shows when the phone's system or an app sends it (the system fetch of the proxy address often does). Otherwise rename the device once. Phones behind a second router (NAT) share one address and show up as one device with several descriptions.
+**Identify a phone (real model):** Chrome hides the phone model in web traffic, but a page can read it with JavaScript, and only on HTTPS. So with sharing on, the PC also serves a small HTTPS page (`https://<PC-IP>:18443/identify`, certificate made fresh in memory on every start). In the dashboard's Devices tab, scan the QR code with the phone (or copy the address). The browser warns the page is not private: tap **Advanced > Proceed** once. The page reads the model and OS version (what `deviceinfo.me` shows) and sends them to the PC, and the device appears with its real name, for example `SHARK PAR-A0 · Android 12`. This does **not** change any phone setting: the proxy address is still pasted into the phone's Wi-Fi proxy setting by hand. Safari and Firefox keep the model private, so use Chrome for this step.
+
+**Device names:** a device is named by you first, then by what it reported on the identify page, then by its hostname if the network knows it, then by what it says it is in its User-Agent (for example `Android 14 · SM-S918B` or `iPhone14,5 · iOS 17.2`). Hover a device name to see the raw User-Agent headers it sent; each distinct header is also written once to `dpi-debug.log` (`device 192.168.1.13 says: ...`). Chrome on Android and Safari hide the exact model in web traffic, so the model only shows when the phone's system or an app sends it (the system fetch of the proxy address often does). Otherwise rename the device once. Phones behind a second router (NAT) share one address and show up as one device with several descriptions.
 
 ## Use on iPhone, Android and other devices
 
@@ -73,7 +75,7 @@ Safety: only private LAN addresses can connect, and a device on the LAN cannot u
 |---|---|
 | `blacklist.txt` | the skip list (also editable in the dashboard) |
 | `settings.json` | saved choices, for example `{"lanSharing": true}` |
-| `device-names.json` | names you gave to devices |
+| `devices.json` | names you gave to devices and what phones reported on the identify page |
 | `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `NO REPLY` (recreated on every start) |
 | `dpi-debug.log` | everything: every CONNECT, timing, bytes (recreated on every start) |
 
@@ -93,4 +95,4 @@ just run                # run from source with console output
 go test ./...
 ```
 
-Layout: `cmd/dpi-bypass` (entry), `internal/proxy` (split + auto-skip + PAC), `internal/dashboard` (web UI + API), `internal/stats` (devices, activity), `internal/blacklist`, `internal/settings`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows icon and menu), `internal/autostart`, `internal/app`, `internal/notify`, `internal/logx`.
+Layout: `cmd/dpi-bypass` (entry), `internal/proxy` (split + auto-skip + PAC), `internal/dashboard` (web UI + API), `internal/stats` (devices, identities, activity), `internal/identify` (HTTPS identify page), `internal/blacklist`, `internal/settings`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows icon and menu), `internal/autostart`, `internal/app`, `internal/notify`, `internal/logx`.

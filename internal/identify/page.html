@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Identify this device</title>
+<style>
+:root{--bg:#1a1b26;--card:#1f2335;--text:#c0caf5;--muted:#7a84b3;--accent:#7aa2f7;--ok:#9ece6a;--bad:#f7768e;--warn:#e0af68;
+  --mono:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace}
+@media (prefers-color-scheme:light){:root{--bg:#e1e2e7;--card:#eceef5;--text:#343b58;--muted:#707aa3;--accent:#2e7de9;--ok:#587539;--bad:#d6244f;--warn:#8c6c3e}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg);color:var(--text);font:15px/1.6 var(--mono)}
+main{width:100%;max-width:440px;background:var(--card);border-radius:18px;padding:28px 24px;text-align:center}
+h1{margin:0 0 6px;font-size:16px;color:var(--accent)}
+h1:before{content:"> ";color:var(--muted)}
+.big{font-size:44px;line-height:1;margin:18px 0 8px}
+#msg{margin:6px 0 0}
+.label{margin:14px 0 4px;font-size:18px;font-weight:700;word-break:break-word}
+.muted{color:var(--muted);font-size:13px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+</style>
+</head>
+<body>
+<main>
+  <h1>dpi-bypass</h1>
+  <div class="muted">Identify this device</div>
+  <div class="big" id="icon">...</div>
+  <div id="msg">Reading your device...</div>
+  <div class="label" id="label"></div>
+  <div class="muted" id="hint"></div>
+</main>
+<script>
+(async () => {
+  const $ = id => document.getElementById(id);
+  const show = (icon, cls, msg, label, hint) => {
+    $('icon').textContent = icon; $('icon').className = 'big ' + cls;
+    $('msg').textContent = msg; $('label').textContent = label || ''; $('hint').textContent = hint || '';
+  };
+  try {
+    const info = {
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      screen: screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1),
+    };
+    // Only available on HTTPS pages: this is what makes the real model visible.
+    const uad = navigator.userAgentData;
+    if (uad) {
+      info.mobile = uad.mobile; info.brands = uad.brands;
+      try {
+        Object.assign(info, await uad.getHighEntropyValues(['model', 'platform', 'platformVersion', 'architecture', 'bitness', 'fullVersionList']));
+      } catch (e) { /* the browser refused: report what we have */ }
+    }
+    const r = await fetch('/identify/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(info) });
+    if (!r.ok) throw new Error('the PC answered ' + r.status);
+    const out = await r.json();
+
+    if (out.model) {
+      show('✓', 'ok', 'Done. The PC now knows this device.', out.label, 'You can close this tab.');
+      setTimeout(() => { try { window.close(); } catch (e) {} }, 1500);
+    } else if (!uad) {
+      show('!', 'warn', "This browser doesn't share the exact model (Safari and Firefox keep it private).", out.label, 'Open this page in Chrome for the model, or just name the device in the dashboard. You can close this tab.');
+    } else {
+      show('!', 'warn', 'The browser did not give a model name.', out.label, 'You can name the device in the dashboard. You can close this tab.');
+    }
+  } catch (e) {
+    show('×', 'bad', 'Could not report to the PC.', String(e && e.message || e), 'Check that you are on the same Wi-Fi as the PC.');
+  }
+})();
+</script>
+</body>
+</html>
