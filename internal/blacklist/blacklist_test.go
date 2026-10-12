@@ -107,6 +107,25 @@ func TestReloadPicksUpEdits(t *testing.T) {
 	}
 }
 
+// Deleting the file while the app runs empties the list; it must not keep serving what it loaded.
+func TestDeletingTheFileEmptiesTheListAndAddRecreatesIt(t *testing.T) {
+	l, path := newWith(t, "gone.example")
+	l.Reload()
+	os.Remove(path)
+	if !l.Reload() || l.Match("gone.example") || len(l.Entries()) != 0 {
+		t.Fatalf("a deleted file must empty the list: %v", l.Items())
+	}
+	if l.Reload() {
+		t.Fatal("Reload keeps reporting a change for a file that stays missing")
+	}
+	if _, err := l.Add("back.example", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if !l.Match("back.example") {
+		t.Fatal("Add after a deletion must work")
+	}
+}
+
 func TestEntriesCarryNotesAndRemoveKeepsTheRest(t *testing.T) {
 	l, path := newWith(t, "keep.example")
 	if _, err := l.Add("a.example.org", "added in dashboard"); err != nil {

@@ -41,7 +41,15 @@ func (l *List) Path() string { return l.path }
 func (l *List) Reload() bool {
 	st, err := os.Stat(l.path)
 	if err != nil {
-		return false
+		if !os.IsNotExist(err) {
+			return false
+		}
+		// the user deleted the file: that means an empty list, not "keep what was loaded"
+		l.mu.Lock()
+		changed := len(l.entries) > 0 || !l.mtime.IsZero()
+		l.entries, l.mtime = nil, time.Time{}
+		l.mu.Unlock()
+		return changed
 	}
 	l.mu.RLock()
 	same := st.ModTime().Equal(l.mtime)
