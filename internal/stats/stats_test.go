@@ -60,6 +60,24 @@ func TestThePCsOwnAddressesAreThisPC(t *testing.T) {
 	}
 }
 
+// The event list is trimmed in batches, so it may briefly hold a little more than
+// maxEvents, but it never grows past that and the dashboard never gets more than maxEvents.
+func TestTheEventListStaysBounded(t *testing.T) {
+	s := New("")
+	for i := 0; i < maxEvents*3; i++ {
+		s.AddConn(Event{Client: "10.0.0.1", Host: "a.example:443", Mode: "direct"})
+		if len(s.events) > maxEvents+trimSlack {
+			t.Fatalf("event list grew to %d", len(s.events))
+		}
+	}
+	if got := len(s.Recent(0)); got != maxEvents {
+		t.Fatalf("Recent(0) returned %d, want %d", got, maxEvents)
+	}
+	if got := len(s.Recent(maxEvents * 10)); got != maxEvents {
+		t.Fatalf("Recent(too many) returned %d, want %d", got, maxEvents)
+	}
+}
+
 func TestDevicesAndEvents(t *testing.T) {
 	s := New("")
 	s.SeenPAC("192.168.1.50")

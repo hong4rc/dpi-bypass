@@ -202,9 +202,9 @@ func state(t *testing.T, h http.Handler) stateReply {
 	return s
 }
 
-func TestTheModeIsShownAndDefaultsToAlways(t *testing.T) {
+func TestTheModeIsShownAndDefaultsToLearn(t *testing.T) {
 	h, _ := newHandler(t)
-	if s := state(t, h); s.Mode != "always" {
+	if s := state(t, h); s.Mode != "learn" {
 		t.Fatalf("default mode %q", s.Mode)
 	}
 }
@@ -217,7 +217,7 @@ func TestSwitchingModeChangesNothingButTheModeAndSurvivesARestart(t *testing.T) 
 	post(h, "POST", "/api/sites", `{"host":"needs.example","state":"NEEDS_BYPASS"}`)
 	before := sites(t, h)
 
-	for _, m := range []string{"learn", "always", "learn"} {
+	for _, m := range []string{"always", "learn", "always"} {
 		rec := post(h, "POST", "/api/mode", `{"mode":"`+m+`"}`)
 		if rec.Code != 200 || state(t, h).Mode != m {
 			t.Fatalf("switch to %s: %d %s", m, rec.Code, rec.Body)
@@ -234,7 +234,7 @@ func TestSwitchingModeChangesNothingButTheModeAndSurvivesARestart(t *testing.T) 
 
 	// restart: the mode and both lists are still there
 	again := New(app.New(dir, "127.0.0.1:18080", "test"))
-	if s := state(t, again); s.Mode != "learn" || s.SiteCount != 2 {
+	if s := state(t, again); s.Mode != "always" || s.SiteCount != 2 {
 		t.Fatalf("after a restart: %+v", s)
 	}
 	if got := sites(t, again); !has(got.NoBypass, "never.example") || !has(got.NeedsBypass, "needs.example") {
@@ -249,7 +249,7 @@ func TestAnInvalidModeIsRefusedAndTheOldOneKept(t *testing.T) {
 			t.Errorf("%s got %d, want 400", body, rec.Code)
 		}
 	}
-	if a.Mode() != policy.Always {
+	if a.Mode() != policy.Learn {
 		t.Fatalf("mode changed to %v by refused requests", a.Mode())
 	}
 }

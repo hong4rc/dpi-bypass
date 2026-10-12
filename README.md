@@ -35,9 +35,9 @@ For the things that need room to read or edit. Dark Tokyo Night theme, light the
 
 | Tab | What it shows |
 |---|---|
-| Overview | on/off, the **DPI mode** (Always or Learn), counters (including connections open right now), **Test Steam connection** with the result shown inline, sharing address with phone steps |
+| Overview | on/off, the **DPI mode** (Learn by default, or Always), counters (including connections open right now), **Test Steam connection** with the result shown inline, sharing address with phone steps |
 | Devices | **Phone setup** (proxy address with a Copy button and a check that it answers, plus a QR code to identify a phone) and who uses the proxy: name, address, MAC, last seen, traffic. Click a name to rename it |
-| Activity | recent connections: bypassed, direct, auto-skipped, learned bypass, failed, with one-click **Skip** (never bypass) and **Bypass** (always bypass) |
+| Activity | the last 2000 connections (the newest 500 are listed, filter and search reach all 2000): bypassed, direct, auto-skipped, learned bypass, failed, with one-click **Skip** (never bypass) and **Bypass** (always bypass) |
 | Logs | live log with info/debug filters, search, pause, copy, clear |
 | Sites | the two lists of what is known about sites, **Needs bypass** and **Never bypass**: add and remove entries (no text editor needed). Also shows where each entry came from |
 
@@ -72,7 +72,7 @@ Safety: only private LAN addresses can connect, and a device on the LAN cannot u
 
 ## DPI modes: Always or Learn
 
-Choose in the dashboard (Overview > DPI mode). The mode only decides what happens for sites **nothing is known about yet**; it never changes what has been learned, so you can switch back and forth freely.
+**Learn is the default.** Choose in the dashboard (Overview > DPI mode). The mode only decides what happens for sites **nothing is known about yet**; it never changes what has been learned, so you can switch back and forth freely.
 
 | | Unknown site | Site known to need the bypass | Site known to work better without it |
 |---|---|---|---|
@@ -93,9 +93,18 @@ Both modes read and write the same two lists, which are the only place anything 
 - **Learn mode and the proxy:** every HTTPS request still goes through the proxy in Learn mode, because the proxy has to see a failure to learn from it. It just leaves unknown sites untouched until one fails.
 - Learned sites are shown in the **Sites** tab and written to `dpi-info.log`; they never pop up a notification.
 
+## Leaving it running for months
+
+The app is meant to run for a very long time without a restart:
+
+- **Bounded memory:** Activity keeps the last 2000 connections and Logs the last 3000 lines; counters are plain numbers; the log files roll over at 5 MB and 20 MB, so they use at most twice that on disk.
+- **No stuck connections:** a client that opens a tunnel and never sends anything is dropped after 30 seconds, dead peers are detected by TCP keep-alive, and web requests that never finish are cut off.
+- **Sharing follows the network:** if the router gives the PC a new address, Wi-Fi reconnects, or the app started before the network was up, sharing moves to the PC's current address within 30 seconds (only while sharing is on; the setup address changes with it).
+- **The identify certificate renews itself** before it expires, without a restart.
+
 ## A game or app breaks? (e.g. League of Legends)
 
-- **Automatic:** in Always mode the app learns `NO_BYPASS` when the bypass keeps breaking a site that works normally. Check the **Sites** tab, and use Learn mode if you would rather start from a normal connection.
+- **Automatic:** in Always mode the app learns `NO_BYPASS` when the bypass keeps breaking a site that works normally. Check the **Sites** tab. Learn mode (the default) starts from a normal connection and does not touch sites that already work.
 - **Manual:** add the domain as **Never bypass** in the dashboard's Sites tab (or one per line in `blacklist.txt`). A domain also covers its subdomains. Edits to either file apply within 2 seconds, no restart.
 
 ## Upgrading from an earlier version (data migration)
@@ -106,7 +115,7 @@ On the first start of this version the app migrates its data folder once. It is 
 |---|---|
 | `blacklist.txt` entries (the "skip list": connect directly) | the same file, **unchanged**, now meaning `NO_BYPASS`. Nothing is rewritten, converted or deleted |
 | no "needs bypass" data existed | `bypass.txt` starts **empty**: nothing is invented, it fills from real evidence or from you |
-| no `dpiMode` | `dpiMode: "always"`, which is what the app did before. A mode you already chose is never changed |
+| no `dpiMode` | `dpiMode: "learn"`, the default. A mode you already chose is never changed |
 
 - **Backup:** `blacklist.txt` is copied once to `blacklist.txt.pre-modes.bak`. An existing backup is never overwritten.
 - **Ambiguous records:** entries are labelled only by their notes: `auto-skip ...` = learned by the app, `added in dashboard` = you, anything else (no note) = `existing`, origin unknown. Earlier versions pre-filled four Riot/League of Legends domains without a note; on an existing install they are kept as `NO_BYPASS` (dropping them could silently break League of Legends again) and shown as `existing` so you can remove them. A new install is not pre-filled. Lines that are not a usable domain (for example with spaces) are left in the file, reported in the log, and never match anything.
@@ -123,8 +132,8 @@ On the first start of this version the app migrates its data folder once. It is 
 | `settings.json` | saved choices, for example `{"lanSharing": true, "dpiMode": "learn", "schema": 2}` |
 | `identify-cert.pem` | the identify page's self-signed certificate and key (only for that page; delete it and a new one is made) |
 | `devices.json` | names you gave to devices and what phones reported on the identify page |
-| `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `AUTO-BYPASS`, `NO REPLY` (recreated on every start) |
-| `dpi-debug.log` | everything: every CONNECT, timing, bytes (recreated on every start) |
+| `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `AUTO-BYPASS`, `NO REPLY` (recreated on every start; at 5 MB it becomes `dpi-info.log.old` and a new one starts) |
+| `dpi-debug.log` | everything: every CONNECT, timing, bytes (recreated on every start; at 20 MB it becomes `dpi-debug.log.old` and a new one starts) |
 
 "Clear log" (tray or dashboard) empties both log files.
 

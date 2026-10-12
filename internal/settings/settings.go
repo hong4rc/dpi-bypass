@@ -11,7 +11,7 @@ import (
 // Settings are the choices that survive a restart.
 type Settings struct {
 	LANSharing bool   `json:"lanSharing"`        // share the bypass with other devices on the LAN
-	DPIMode    string `json:"dpiMode,omitempty"` // how unknown sites are handled: "always" or "learn" (empty = always)
+	DPIMode    string `json:"dpiMode,omitempty"` // how unknown sites are handled: "always" or "learn" (empty = learn)
 	Schema     int    `json:"schema,omitempty"`  // version of the data layout the app has migrated this folder to
 }
 

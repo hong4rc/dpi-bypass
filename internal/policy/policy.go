@@ -33,13 +33,13 @@ const (
 	Learn Mode = "learn"
 )
 
-// ParseMode accepts "always" or "learn".
+// ParseMode accepts "always" or "learn"; anything else is not valid and gives the default, Learn.
 func ParseMode(s string) (Mode, bool) {
 	switch Mode(s) {
 	case Always, Learn:
 		return Mode(s), true
 	}
-	return Always, false
+	return Learn, false
 }
 
 // Decision is what is known about a site.
@@ -126,6 +126,9 @@ type Policy struct {
 	pending map[string]*evidence
 }
 
+// pendingSweep is how many pending observations trigger removing the expired ones.
+const pendingSweep = 256
+
 type evidence struct {
 	count int
 	since time.Time
@@ -145,7 +148,7 @@ func (p *Policy) Mode() Mode {
 	if m, ok := ParseMode(string(p.mode())); ok {
 		return m
 	}
-	return Always
+	return Learn
 }
 
 // Decide returns what is known about host. NO_BYPASS wins over NEEDS_BYPASS.
@@ -191,6 +194,13 @@ func (p *Policy) Observe(host string, d Decision) (persisted bool, err error) {
 		return false, nil // already decided (learned meanwhile, or set by the user)
 	}
 	k, now := key(host, d), p.now()
+	if len(p.pending) >= pendingSweep {
+		for pk, e := range p.pending { // expired evidence can never count again: do not let it pile up over years
+			if now.Sub(e.since) > p.Window {
+				delete(p.pending, pk)
+			}
+		}
+	}
 	ev := p.pending[k]
 	if ev == nil || now.Sub(ev.since) > p.Window {
 		ev = &evidence{since: now}

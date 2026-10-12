@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	maxEvents    = 500
+	maxEvents    = 2000          // connections kept for the Activity tab
+	trimSlack    = maxEvents / 4 // trimmed in one go, so a busy proxy does not copy the whole list for every connection
 	activeWindow = 2 * time.Minute
 )
 
@@ -207,7 +208,7 @@ func (s *Store) Open(e Event) uint64 {
 	}
 	s.open[e.ID] = e.Client
 	s.events = append(s.events, e)
-	if len(s.events) > maxEvents {
+	if len(s.events) > maxEvents+trimSlack {
 		s.events = append([]Event(nil), s.events[len(s.events)-maxEvents:]...)
 	}
 	return e.ID
@@ -295,7 +296,10 @@ func (s *Store) Devices() []Device {
 func (s *Store) Recent(n int) []Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if n <= 0 || n > len(s.events) {
+	if n <= 0 || n > maxEvents {
+		n = maxEvents
+	}
+	if n > len(s.events) {
 		n = len(s.events)
 	}
 	out := make([]Event, 0, n)

@@ -91,20 +91,20 @@ func TestMigrationLeavesInvalidAndAmbiguousRecordsAloneAndSaysSo(t *testing.T) {
 	}
 }
 
-func TestMigrationRecordsTheSchemaAndDefaultsToAlwaysOnlyWhenNoModeIsSet(t *testing.T) {
+func TestMigrationRecordsTheSchemaAndDefaultsToLearnOnlyWhenNoModeIsSet(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "blacklist.txt", "a.example\n")
 	a := New(dir, "127.0.0.1:0", "test")
-	if s := a.Settings.Get(); s.Schema != schemaVersion || s.DPIMode != "always" || a.Mode() != policy.Always {
+	if s := a.Settings.Get(); s.Schema != schemaVersion || s.DPIMode != "learn" || a.Mode() != policy.Learn {
 		t.Fatalf("settings after migration: %+v", s)
 	}
 
 	// a mode that was already chosen is never overwritten
 	dir = t.TempDir()
-	write(t, dir, "settings.json", `{"lanSharing": true, "dpiMode": "learn"}`)
+	write(t, dir, "settings.json", `{"lanSharing": true, "dpiMode": "always"}`)
 	write(t, dir, "blacklist.txt", "a.example\n")
 	b := New(dir, "127.0.0.1:0", "test")
-	if s := b.Settings.Get(); s.DPIMode != "learn" || !s.LANSharing || s.Schema != schemaVersion {
+	if s := b.Settings.Get(); s.DPIMode != "always" || !s.LANSharing || s.Schema != schemaVersion {
 		t.Fatalf("existing settings were changed: %+v", s)
 	}
 }
@@ -157,8 +157,8 @@ func TestAFreshFolderStartsEmptyWithoutAnyPrefilledSiteOrBackup(t *testing.T) {
 	if !a.Migration.Ran || a.Migration.Entries != 0 || a.Migration.Err != nil {
 		t.Fatalf("report: %+v", a.Migration)
 	}
-	if a.Mode() != policy.Always {
-		t.Fatalf("the default mode is Always (the behaviour before modes), got %v", a.Mode())
+	if a.Mode() != policy.Learn {
+		t.Fatalf("the default mode is Learn, got %v", a.Mode())
 	}
 }
 

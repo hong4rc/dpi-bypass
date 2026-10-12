@@ -12,7 +12,10 @@ import (
 	"sync"
 )
 
-const ringSize = 3000
+const (
+	ringSize  = 3000         // lines kept for the dashboard
+	ringSlack = ringSize / 4 // trimmed in one go instead of copying the ring for every line
+)
 
 // Line is one log line kept for the dashboard.
 type Line struct {
@@ -43,7 +46,7 @@ func (r *ring) add(level, text string) {
 	r.seq++
 	l := Line{Seq: r.seq, Level: level, Text: text}
 	r.lines = append(r.lines, l)
-	if len(r.lines) > ringSize {
+	if len(r.lines) > ringSize+ringSlack {
 		r.lines = append([]Line(nil), r.lines[len(r.lines)-ringSize:]...)
 	}
 	for ch := range r.subs {
@@ -64,16 +67,48 @@ func (w ringWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// logFile is a log file that can be emptied while the app keeps writing to it.
+// Size limits of the log files. A file that would grow past its limit becomes
+// "<name>.old" (replacing the previous one) and a new file starts, so the logs of
+// an app left running for years take at most twice the limit on disk.
+const (
+	infoLimit  = 5 << 20
+	debugLimit = 20 << 20
+)
+
+// logFile is a log file that can be emptied while the app keeps writing to it,
+// and that rolls over instead of growing without bound.
 type logFile struct {
-	mu sync.Mutex
-	f  *os.File
+	mu    sync.Mutex
+	f     *os.File
+	path  string
+	limit int64
+	size  int64
 }
 
 func (l *logFile) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.f.Write(p)
+	if l.size > 0 && l.size+int64(len(p)) > l.limit {
+		l.roll()
+	}
+	n, err := l.f.Write(p)
+	l.size += int64(n)
+	return n, err
+}
+
+// roll moves the full file aside and starts a new one. If that fails the old
+// file is emptied instead: the limit holds either way.
+func (l *logFile) roll() {
+	l.f.Close()
+	os.Remove(l.path + ".old")
+	if os.Rename(l.path, l.path+".old") != nil {
+		os.Remove(l.path)
+	}
+	f, err := os.Create(l.path)
+	if err != nil {
+		f, _ = os.OpenFile(os.DevNull, os.O_WRONLY, 0) // keep the app running without this log
+	}
+	l.f, l.size = f, 0
 }
 
 func (l *logFile) clear() {
@@ -81,6 +116,7 @@ func (l *logFile) clear() {
 	defer l.mu.Unlock()
 	if l.f.Truncate(0) == nil {
 		l.f.Seek(0, io.SeekStart) // not O_APPEND: without this the next write leaves a hole of zeros
+		l.size = 0
 	}
 }
 
@@ -100,7 +136,10 @@ func Clear() {
 func Recent(n int) []Line {
 	mem.mu.Lock()
 	defer mem.mu.Unlock()
-	if n <= 0 || n > len(mem.lines) {
+	if n <= 0 || n > ringSize {
+		n = ringSize
+	}
+	if n > len(mem.lines) {
 		n = len(mem.lines)
 	}
 	return append([]Line(nil), mem.lines[len(mem.lines)-n:]...)
@@ -136,22 +175,23 @@ func Init(dir string) {
 		f.f.Close()
 	}
 	files = nil
-	open := func(name string) *logFile {
-		f, err := os.Create(filepath.Join(dir, name))
+	open := func(name string, limit int64) *logFile {
+		path := filepath.Join(dir, name)
+		f, err := os.Create(path)
 		if err != nil {
 			return nil
 		}
-		lf := &logFile{f: f}
+		lf := &logFile{f: f, path: path, limit: limit}
 		files = append(files, lf)
 		return lf
 	}
 	info := []io.Writer{lenientWriter{os.Stdout}, ringWriter{"info", mem}}
 	debug := []io.Writer{ringWriter{"debug", mem}}
 	if dir != "" {
-		if f := open("dpi-info.log"); f != nil {
+		if f := open("dpi-info.log", infoLimit); f != nil {
 			info = append(info, f)
 		}
-		if f := open("dpi-debug.log"); f != nil {
+		if f := open("dpi-debug.log", debugLimit); f != nil {
 			info = append(info, f) // the debug file holds everything
 			debug = append(debug, f)
 		}

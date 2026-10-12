@@ -41,7 +41,29 @@ func TestRingKeepsOnlyNewestLines(t *testing.T) {
 	for i := 0; i < ringSize+50; i++ {
 		r.add("info", "x")
 	}
-	if len(r.lines) != ringSize || r.lines[len(r.lines)-1].Seq != int64(ringSize+50) {
+	if len(r.lines) > ringSize+ringSlack || r.lines[len(r.lines)-1].Seq != int64(ringSize+50) {
 		t.Fatalf("len=%d last seq=%d", len(r.lines), r.lines[len(r.lines)-1].Seq)
+	}
+	for i := 0; i < ringSlack; i++ { // past the slack the ring is cut back to ringSize in one go
+		r.add("info", "x")
+	}
+	for i := 0; i < ringSize*3; i++ { // however long it runs, the ring stays between ringSize and ringSize+ringSlack
+		r.add("info", "x")
+		if n := len(r.lines); n > ringSize+ringSlack {
+			t.Fatalf("the ring grew to %d lines", n)
+		}
+	}
+	if n := len(r.lines); n < ringSize || r.lines[len(r.lines)-1].Seq != int64(ringSize+50+ringSlack+ringSize*3) {
+		t.Fatalf("after trimming: len=%d last seq=%d", n, r.lines[len(r.lines)-1].Seq)
+	}
+}
+
+// What the dashboard can fetch never exceeds the documented ring size, whatever the slack holds.
+func TestRecentNeverReturnsMoreThanTheRing(t *testing.T) {
+	for i := 0; i < ringSize+ringSlack/2; i++ {
+		Info.Printf("line %d", i)
+	}
+	if got := len(Recent(0)); got > ringSize {
+		t.Fatalf("Recent(0) returned %d lines, the ring is %d", got, ringSize)
 	}
 }

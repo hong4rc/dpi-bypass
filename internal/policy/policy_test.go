@@ -391,17 +391,17 @@ func TestDecisionAndModeNamesRoundTrip(t *testing.T) {
 			t.Errorf("mode %v does not round-trip", m)
 		}
 	}
-	if m, ok := ParseMode("sometimes"); ok || m != Always {
-		t.Errorf("an invalid mode must be rejected and fall back to Always, got %v %v", m, ok)
+	if m, ok := ParseMode("sometimes"); ok || m != Learn {
+		t.Errorf("an invalid mode must be rejected and fall back to Learn, got %v %v", m, ok)
 	}
 }
 
-func TestAnInvalidModeSettingFallsBackToAlways(t *testing.T) {
+func TestAnInvalidModeSettingFallsBackToLearn(t *testing.T) {
 	r := newRig(t, Mode("garbage"))
-	if r.Mode() != Always {
+	if r.Mode() != Learn {
 		t.Fatalf("mode %q", r.Mode())
 	}
-	if got := r.PlanFor(anyUnknown); got != alwaysUnk {
+	if got := r.PlanFor(anyUnknown); got != learnUnk {
 		t.Fatalf("plan %+v", got)
 	}
 }

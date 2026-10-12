@@ -108,9 +108,21 @@ func (a *App) EnableLAN() error {
 	if len(a.lan) > 0 {
 		return nil
 	}
+	if err := a.bindLAN(); err != nil {
+		return err
+	}
+	a.saveLAN(true)
+	logx.Info.Printf("LAN sharing ON, devices can use: %v", a.lanURLs())
+	return nil
+}
+
+// bindLAN listens on the PC's current private addresses (a.mu held).
+func (a *App) bindLAN() error {
 	_, port, _ := net.SplitHostPort(a.Addr)
+	addrs := a.LANAddrs()
+	a.lanTried = append([]string{}, addrs...)
 	var bound []string
-	for _, ip := range a.LANAddrs() {
+	for _, ip := range addrs {
 		ln, err := net.Listen("tcp", net.JoinHostPort(ip, port))
 		if err != nil {
 			logx.Info.Printf("LAN: cannot listen on %s: %v", ip, err)
@@ -118,31 +130,80 @@ func (a *App) EnableLAN() error {
 		}
 		a.lan = append(a.lan, ln)
 		bound = append(bound, ip)
-		go http.Serve(lanOnly{ln}, a.Proxy)
+		go a.newServer(a.Proxy).Serve(lanOnly{ln})
 	}
 	if len(a.lan) == 0 {
 		return errors.New("no LAN address found - is this PC connected to your Wi-Fi/router?")
 	}
+	a.bound = bound
 	a.startIdentify(bound, port)
-	a.saveLAN(true)
-	logx.Info.Printf("LAN sharing ON, devices can use: %v", a.lanURLs())
 	return nil
+}
+
+// unbindLAN closes the sharing listeners without touching the saved choice (a.mu held).
+func (a *App) unbindLAN() {
+	for _, ln := range a.lan {
+		ln.Close()
+	}
+	a.lan, a.bound = nil, nil
+	for _, ln := range a.identify {
+		ln.Close()
+	}
+	a.identify = nil
 }
 
 // DisableLAN stops serving other devices and forgets the choice.
 func (a *App) DisableLAN() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for _, ln := range a.lan {
-		ln.Close()
-	}
-	a.lan = nil
-	for _, ln := range a.identify {
-		ln.Close()
-	}
-	a.identify = nil
+	a.unbindLAN()
 	a.saveLAN(false)
 	logx.Info.Println("LAN sharing OFF")
+}
+
+// refreshLAN keeps sharing on the PC's current addresses while the app runs for
+// months: the router may hand out a new address, Wi-Fi may reconnect, and the app
+// may have started before the network was up. It only acts when sharing is wanted
+// and the set of addresses changed since the last attempt, so a permanent failure
+// is not retried (and logged) over and over.
+func (a *App) refreshLAN() {
+	if !a.LANWanted() {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := a.LANAddrs()
+	if len(now) == 0 || (a.lanTried != nil && sameAddrs(now, a.lanTried)) {
+		return
+	}
+	a.unbindLAN()
+	if err := a.bindLAN(); err != nil {
+		logx.Info.Printf("LAN sharing could not follow the address change: %v", err)
+		return
+	}
+	logx.Info.Printf("LAN sharing now on the PC's current addresses, devices can use: %v", a.lanURLs())
+}
+
+func sameAddrs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	x, y := append([]string(nil), a...), append([]string(nil), b...)
+	sort.Strings(x)
+	sort.Strings(y)
+	for i := range x {
+		if x[i] != y[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// newServer is the HTTP server for a listener: connections that never finish
+// their request line or sit idle are dropped, so they cannot pile up for years.
+// A tunnel (CONNECT) is hijacked and then lives outside these timeouts.
+func (a *App) newServer(h http.Handler) *http.Server {
+	return &http.Server{Handler: h, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 2 * time.Minute}
 }
 
 func (a *App) LANEnabled() bool {
@@ -193,13 +254,15 @@ func (a *App) startIdentify(ips []string, proxyPort string) {
 	for _, ip := range ips {
 		parsed = append(parsed, net.ParseIP(ip))
 	}
-	cert, err := identify.Persistent(a.Dir, parsed)
-	if err != nil {
+	cert := identify.Renewing(a.Dir, parsed) // re-checked now and then: an app left running for years must not serve an expired certificate
+	if _, err := cert(); err != nil {
 		logx.Info.Printf("identify page unavailable: %v", err)
 		return
 	}
 	srv := &http.Server{
-		ErrorLog: log.New(io.Discard, "", 0), // phones that refuse the certificate would otherwise spam errors
+		ErrorLog:    log.New(io.Discard, "", 0), // phones that refuse the certificate would otherwise spam errors
+		ReadTimeout: 30 * time.Second,           // also covers the TLS handshake: a client that never finishes it is dropped
+		IdleTimeout: time.Minute,
 		Handler: identify.New(func(client string, id stats.Identity) error {
 			ip := stats.ClientIP(client)
 			logx.Info.Printf("device %s identified itself: %s", ip, id.Describe())
@@ -213,7 +276,7 @@ func (a *App) startIdentify(ips []string, proxyPort string) {
 			continue
 		}
 		a.identify = append(a.identify, raw)
-		go srv.Serve(identify.TLSListener(lanOnly{raw}, cert))
+		go srv.Serve(identify.TLSListenerFrom(lanOnly{raw}, cert))
 	}
 }
 

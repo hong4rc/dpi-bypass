@@ -20,6 +20,7 @@ import (
 var (
 	dialTimeout       = 10 * time.Second
 	firstReplyTimeout = 6 * time.Second
+	helloTimeout      = 30 * time.Second // a client that opens a tunnel and never sends its hello must not hold it forever
 )
 
 // Connection modes reported to OnOpen.
@@ -233,7 +234,9 @@ func name(m policy.Method) string {
 // persists only once it has been seen often enough. It returns the connection to
 // use, the server's first bytes and how the connection was handled.
 func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byte, string, error) {
+	cl.SetReadDeadline(time.Now().Add(helloTimeout))
 	hello, err := readHello(cl)
+	cl.SetReadDeadline(time.Time{})
 	if err != nil {
 		up.Close()
 		return nil, nil, "", err

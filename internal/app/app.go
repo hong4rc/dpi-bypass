@@ -38,6 +38,8 @@ type App struct {
 	on       bool
 	lan      []net.Listener // extra listeners while sharing with other devices
 	identify []net.Listener // HTTPS "identify this device" listeners, up while sharing
+	bound    []string       // the addresses sharing is listening on
+	lanTried []string       // the addresses the last attempt to share used (nil = none yet)
 	quit     chan struct{}
 	once     sync.Once
 }
@@ -87,7 +89,7 @@ func (a *App) DashboardURL() string { return "http://" + a.Addr + "/" }
 
 // Start serves the proxy on ln, turns the bypass on and watches the site lists.
 func (a *App) Start(ln net.Listener) {
-	go http.Serve(ln, a.Proxy)
+	go a.newServer(a.Proxy).Serve(ln)
 	a.Enable()
 	go a.watch()
 }
@@ -123,11 +125,14 @@ func (a *App) Done() <-chan struct{} { return a.quit }
 func (a *App) watch() {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
-	for {
+	for tick := 1; ; tick++ {
 		select {
 		case <-a.quit:
 			return
 		case <-t.C:
+			if tick%15 == 0 { // every 30 seconds
+				a.refreshLAN()
+			}
 			if a.Policy.Reload() {
 				logx.Info.Printf("site lists reloaded: %d never-bypass, %d needs-bypass", a.Policy.Skip.Len(), a.Policy.Bypass.Len())
 				if a.On() {
@@ -165,8 +170,8 @@ func check(proxyAddr, target string) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// Mode is how unknown sites are handled; an empty or invalid setting means Always,
-// which is what the app did before modes existed.
+// Mode is how unknown sites are handled; an empty or invalid setting means Learn,
+// which leaves sites that work normally untouched.
 func (a *App) Mode() policy.Mode {
 	m, _ := policy.ParseMode(a.Settings.Get().DPIMode)
 	return m

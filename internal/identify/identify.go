@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"dpi/internal/stats"
@@ -248,5 +249,44 @@ func loadUsable(path string, ips []net.IP) (tls.Certificate, bool) {
 
 // TLSListener wraps ln so connections speak TLS 1.2+ with cert.
 func TLSListener(ln net.Listener, cert tls.Certificate) net.Listener {
-	return tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12})
+	return TLSListenerFrom(ln, func() (tls.Certificate, error) { return cert, nil })
+}
+
+// TLSListenerFrom is TLSListener with the certificate fetched for each connection,
+// so a source that renews it (Renewing) takes effect without restarting the listener.
+func TLSListenerFrom(ln net.Listener, get func() (tls.Certificate, error)) net.Listener {
+	return tls.NewListener(ln, &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			c, err := get()
+			return &c, err
+		},
+	})
+}
+
+// recheckEvery is how often Renewing looks at the saved certificate again.
+const recheckEvery = time.Hour
+
+// Renewing returns a certificate source for a listener that runs for a very long
+// time: it serves the saved certificate and, at most once per recheckEvery, asks
+// Persistent again, which replaces a certificate that is close to expiring.
+func Renewing(dir string, ips []net.IP) func() (tls.Certificate, error) {
+	var (
+		mu      sync.Mutex
+		cert    tls.Certificate
+		checked time.Time
+	)
+	return func() (tls.Certificate, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if checked.IsZero() || time.Since(checked) > recheckEvery {
+			c, err := Persistent(dir, ips)
+			if len(c.Certificate) > 0 { // usable even when it could not be saved
+				cert, checked = c, time.Now()
+			} else if err != nil && len(cert.Certificate) == 0 {
+				return c, err
+			}
+		}
+		return cert, nil
+	}
 }

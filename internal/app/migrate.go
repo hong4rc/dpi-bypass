@@ -49,8 +49,8 @@ type Migration struct {
 //     is never overwritten). Restoring that file and deleting "schema" from
 //     settings.json undoes the migration; an older version of the app reads the
 //     unchanged blacklist.txt and ignores the new files.
-//   - dpiMode is set to "always" only when it is not set: the behaviour before DPI
-//     modes was Always, and a mode the user already chose is never changed.
+//   - dpiMode is set to "learn" only when it is not set (Learn is the default and does
+//     not touch sites that already work); a mode the user already chose is never changed.
 func migrate(dir string, st *settings.Store) Migration {
 	var m Migration
 	if st.Get().Schema >= schemaVersion {
@@ -95,7 +95,7 @@ func migrate(dir string, st *settings.Store) Migration {
 
 	if err := st.Update(func(s *settings.Settings) {
 		if s.DPIMode == "" {
-			s.DPIMode = string(policy.Always)
+			s.DPIMode = string(policy.Learn)
 		}
 		s.Schema = schemaVersion
 	}); err != nil {

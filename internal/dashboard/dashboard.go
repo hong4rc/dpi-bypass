@@ -218,7 +218,7 @@ func (h *handler) nameDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) connections(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, h.a.Stats.Recent(limit(r, 200, 500)))
+	writeJSON(w, h.a.Stats.Recent(limit(r, 200, 2000)))
 }
 
 func (h *handler) logs(w http.ResponseWriter, r *http.Request) {

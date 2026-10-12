@@ -467,17 +467,19 @@ const siteButtons = e => {
   return b('NO_BYPASS', 'Skip');
 };
 let events = [];
-async function loadActivity() { events = await api('/api/connections?limit=300'); renderActivity(); }
+async function loadActivity() { events = await api('/api/connections?limit=2000'); renderActivity(); }
 function renderActivity() {
   const mode = $('modeFilter').value, q = $('actSearch').value.trim().toLowerCase();
   const rows = events.filter(e => (!mode || e.mode === mode) && (!q || (e.host + ' ' + e.client).toLowerCase().includes(q)));
+  const total = rows.length, shown = rows.slice(0, 500); // the page stays light; search and the filter reach all kept connections
   if (!rows.length) { $('activityBody').innerHTML = '<div class="empty">' + (events.length ? 'Nothing matches the filter.' : 'No connections yet. Open a website and it will show up here.') + '</div>'; return; }
   $('activityBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Time</th><th>Device</th><th>Site</th><th>Result</th><th>Size</th><th>Took</th><th></th></tr></thead><tbody>' +
-    rows.map(e => '<tr><td class="muted">' + esc(new Date(e.time).toLocaleTimeString()) + '</td><td>' + esc(e.client === '127.0.0.1' ? 'this PC' : e.client) + '</td>' +
+    shown.map(e => '<tr><td class="muted">' + esc(new Date(e.time).toLocaleTimeString()) + '</td><td>' + esc(e.client === '127.0.0.1' ? 'this PC' : e.client) + '</td>' +
       '<td class="wrap">' + esc(e.host) + (e.err ? '<div class="muted" style="font-size:12px">' + esc(e.err) + '</div>' : '') + '</td>' +
       '<td><span class="badge ' + esc(e.mode) + '">' + esc(modeLabel[e.mode] || e.mode) + '</span>' + (e.open ? ' <span class="badge open">open</span>' : '') + '</td>' +
       '<td class="muted">' + (e.open ? '-' : esc(fmtBytes(e.down + e.up))) + '</td><td class="muted">' + (e.open ? 'open' : e.ms + ' ms') + '</td>' +
-      '<td style="text-align:right">' + siteButtons(e) + '</td></tr>').join('') + '</tbody></table></div>';
+      '<td style="text-align:right">' + siteButtons(e) + '</td></tr>').join('') + '</tbody></table></div>' +
+    (total > shown.length ? '<div class="empty">Showing the newest ' + shown.length + ' of ' + total + '. Use the filter or search to find older ones.</div>' : '');
 }
 $('modeFilter').addEventListener('change', renderActivity);
 $('actSearch').addEventListener('input', renderActivity);

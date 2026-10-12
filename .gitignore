@@ -11,3 +11,5 @@ identify-cert.pem
 devices.json
 bypass.txt
 blacklist.txt.pre-modes.bak
+dpi-info.log.old
+dpi-debug.log.old

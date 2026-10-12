@@ -96,10 +96,10 @@ func TestChangesNeedTheCustomHeaderAndSameOrigin(t *testing.T) {
 	if rec := do(h, cross); rec.Code != http.StatusForbidden {
 		t.Errorf("cross-origin POST got %d, want 403", rec.Code)
 	}
-	if rec := do(h, req{method: "POST", path: "/api/mode", body: `{"mode":"learn"}`}); rec.Code != http.StatusForbidden {
+	if rec := do(h, req{method: "POST", path: "/api/mode", body: `{"mode":"always"}`}); rec.Code != http.StatusForbidden {
 		t.Errorf("mode change without the header got %d, want 403", rec.Code)
 	}
-	if a.Policy.Decide("csrf.example.org") != policy.Unknown || a.Mode() != policy.Always {
+	if a.Policy.Decide("csrf.example.org") != policy.Unknown || a.Mode() != policy.Learn {
 		t.Fatal("a blocked request still changed something")
 	}
 	same := req{method: "POST", path: "/api/sites", body: body, headers: map[string]string{"X-Requested-With": "dpi", "Origin": "http://127.0.0.1:18080"}}
