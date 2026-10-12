@@ -61,7 +61,10 @@ func appleLabel(ua string) string {
 
 func androidLabel(ua string) string {
 	label := "Android"
-	if m := reAndroidVersion.FindStringSubmatch(ua); m != nil {
+	// Chrome freezes its header to "Android 10; K" whatever the phone really runs
+	// (a real Android 12 phone sends exactly this), so that version means nothing.
+	reduced := strings.Contains(ua, "Android 10; K)")
+	if m := reAndroidVersion.FindStringSubmatch(ua); m != nil && !reduced {
 		label += " " + m[1]
 	}
 	if model := androidModel(ua); model != "" {

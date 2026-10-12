@@ -144,7 +144,7 @@ func TestSeenAgentReportsEachDistinctHeaderOnce(t *testing.T) {
 	s := New("")
 	ua := "Mozilla/5.0 (Linux; Android 10; K) Chrome/120 Mobile Safari/537.36"
 	label, isNew := s.SeenAgent("192.168.1.13", ua)
-	if label != "Android 10" || !isNew {
+	if label != "Android" || !isNew {
 		t.Fatalf("first sight: %q new=%v", label, isNew)
 	}
 	if _, isNew := s.SeenAgent("192.168.1.13", ua); isNew {
