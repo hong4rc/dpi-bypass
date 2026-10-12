@@ -18,17 +18,34 @@ Or build: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
 
 ## Use (Windows)
 
-1. Double-click the exe. A green dot appears in the system tray and a notification says it is ON.
+1. Double-click the exe. A dot appears in the system tray and a notification says it is ON.
 2. Open Steam or your browser. Check: https://store.steampowered.com
-3. Tray menu: **Turn off/on**, **Test Steam connection**, **Open log**, **Edit skip list**, **Start with Windows**, **Quit**.
+3. **Right-click the tray icon** for quick actions: Turn on/off, Share with other devices, Test Steam connection, Open dashboard, Clear log, Start with Windows, Quit.
+4. **Left-click the tray icon** (or open `http://127.0.0.1:18080/`) for the dashboard.
 
-macOS/Linux: run the binary in a terminal and stop it with Ctrl+C. On Linux without GNOME, set your system proxy auto-config (PAC) URL to `http://127.0.0.1:18080/proxy.pac` yourself.
+macOS/Linux: run the binary in a terminal, open the dashboard address it prints, stop with Ctrl+C. On Linux without GNOME, set your system proxy auto-config (PAC) URL to `http://127.0.0.1:18080/proxy.pac` yourself.
+
+## Dashboard
+
+For the things that need room to read or edit. Dark Tokyo Night theme, light theme follows your system.
+
+| Tab | What it shows |
+|---|---|
+| Overview | on/off, counters, Steam test, sharing address with phone steps |
+| Devices | who uses the proxy: name, address, MAC, last seen, traffic. Click a name to rename it |
+| Activity | recent connections: bypassed, direct, auto-skipped, failed, with a one-click **Skip** |
+| Logs | live log with info/debug filters, search, pause, copy, clear |
+| Skip list | add and remove domains (no text editor needed) |
+
+Only this PC can open the dashboard: other devices get a 403, the page must be opened as `127.0.0.1` or `localhost`, and every change needs a header other websites can't send.
+
+**Device names:** a device is named by you first, then by its hostname if the network knows it, then by what it says it is in its User-Agent (for example `Android 14 · SM-S918B` or `iPhone · iOS 17.2`). iPhones usually hide the exact model, so rename them once. Phones behind a second router (NAT) share one address, and show up as one device with several descriptions.
 
 ## Use on iPhone, Android and other devices
 
 Your PC can share the bypass with every device on the same Wi-Fi/router.
 
-1. Tray menu: tick **Allow other devices**. The address `http://<PC-IP>:18080/proxy.pac` is copied for you (also in the menu, and in `dpi-info.log`). Without a tray: run with `-lan` (remembered; `-no-lan` turns it off).
+1. Tray menu: tick **Share with other devices** (or use the switch in the dashboard). The address `http://<PC-IP>:18080/proxy.pac` is copied for you and shown in the dashboard. Without a tray: run with `-lan` (remembered; `-no-lan` turns it off).
 2. Windows asks about the firewall the first time: allow **Private networks**. If you missed it, run once as admin: `netsh advfirewall firewall add rule name="dpi-bypass" dir=in action=allow protocol=TCP localport=18080 profile=private`
 3. On the device, set the Wi-Fi proxy to **Automatic** and paste the address:
    - iPhone: Settings > Wi-Fi > (i) > Configure Proxy > Automatic
@@ -42,27 +59,25 @@ Safety: only private LAN addresses can connect, and a device on the LAN cannot u
 
 - Quitting, Ctrl+C or a normal close restores your previous proxy setting.
 - A hidden guard process (Windows) restores it even if the app crashes or is killed.
-- The PAC falls back to a direct connection, and only `https://` traffic is sent through the proxy.
+- The PAC falls back to a direct connection, and only `https://` traffic to public sites is sent through the proxy (LAN addresses go direct).
 - Still stuck? Run `dpi-bypass -restore`.
 
 ## A game or app breaks? (e.g. League of Legends)
 
-- **Automatic:** if a site gets no reply with the split hello but works without it, the app retries without splitting and adds the host to `blacklist.txt`, with a notification.
-- **Manual:** put domains in `blacklist.txt` (next to the exe, created on first run) to connect **directly**. A domain also covers its subdomains. Edits apply within 2 seconds, no restart.
+- **Automatic:** if a site gets no reply (or a TLS alert) with the split hello but works without it, the app retries without splitting and adds the host to the skip list. You get **one** notification per batch of newly skipped sites, never one per connection.
+- **Manual:** add domains in the dashboard's Skip list, or in `blacklist.txt` next to the exe. A domain also covers its subdomains. Edits apply within 2 seconds, no restart.
 
-```
-riotgames.com
-riotcdn.net
-```
-
-## Logs
-
-Recreated on every start, next to the exe:
+## Files next to the exe
 
 | File | Content |
 |---|---|
-| `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `NO REPLY` |
-| `dpi-debug.log` | everything: every CONNECT, timing, bytes up/down |
+| `blacklist.txt` | the skip list (also editable in the dashboard) |
+| `settings.json` | saved choices, for example `{"lanSharing": true}` |
+| `device-names.json` | names you gave to devices |
+| `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `NO REPLY` (recreated on every start) |
+| `dpi-debug.log` | everything: every CONNECT, timing, bytes (recreated on every start) |
+
+"Clear log" (tray or dashboard) empties both log files.
 
 ## Limits
 
@@ -78,4 +93,4 @@ just run                # run from source with console output
 go test ./...
 ```
 
-Layout: `cmd/dpi-bypass` (entry), `internal/proxy` (split + auto-skip + PAC), `internal/blacklist`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows UI), `internal/app`, `internal/notify`, `internal/logx`.
+Layout: `cmd/dpi-bypass` (entry), `internal/proxy` (split + auto-skip + PAC), `internal/dashboard` (web UI + API), `internal/stats` (devices, activity), `internal/blacklist`, `internal/settings`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows icon and menu), `internal/autostart`, `internal/app`, `internal/notify`, `internal/logx`.

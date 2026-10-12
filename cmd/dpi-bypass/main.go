@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"dpi/internal/app"
+	"dpi/internal/dashboard"
 	"dpi/internal/logx"
 	"dpi/internal/notify"
 	"dpi/internal/sysproxy"
@@ -61,6 +62,7 @@ func main() {
 	logx.Init(dir)
 
 	a := app.New(dir, addr, version)
+	a.Proxy.Fallback = dashboard.New(a) // every path except /proxy.pac
 	a.Start(ln)
 	if *noLAN {
 		a.DisableLAN()
@@ -76,7 +78,7 @@ func main() {
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() { <-sig; a.Quit() }()
 
-	logx.Info.Printf("dpi-bypass %s running. Close it from the tray menu (or Ctrl+C in a terminal).", version)
-	go notify.Send("DPI bypass is ON", "Blocked sites like Steam should work now.")
+	logx.Info.Printf("dpi-bypass %s running. Dashboard: %s  (quit from the tray menu, or Ctrl+C in a terminal)", version, a.DashboardURL())
+	go notify.Send("DPI bypass is ON", "Click the tray icon to open the dashboard.")
 	tray.Run(a)
 }

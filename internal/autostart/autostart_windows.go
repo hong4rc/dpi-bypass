@@ -1,4 +1,5 @@
-package tray
+// Package autostart turns "start with the computer" on and off (Windows only).
+package autostart
 
 import (
 	"os"
@@ -11,7 +12,10 @@ const (
 	runValue = "dpi-bypass"
 )
 
-func autostartEnabled() bool {
+// Supported reports whether this platform can start the app at login.
+func Supported() bool { return true }
+
+func Enabled() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runPath, registry.QUERY_VALUE)
 	if err != nil {
 		return false
@@ -21,7 +25,7 @@ func autostartEnabled() bool {
 	return err == nil
 }
 
-func setAutostart(on bool) error {
+func Set(on bool) error {
 	k, _, err := registry.CreateKey(registry.CURRENT_USER, runPath, registry.SET_VALUE) // key may not exist on a fresh profile
 	if err != nil {
 		return err

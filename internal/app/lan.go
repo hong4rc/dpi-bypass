@@ -9,10 +9,11 @@ import (
 	"sort"
 
 	"dpi/internal/logx"
+	"dpi/internal/settings"
 )
 
-// lanMarker (next to the exe) remembers that sharing was turned on.
-const lanMarker = "lan-sharing.on"
+// legacyLANMarker is how earlier versions remembered that sharing was on.
+const legacyLANMarker = "lan-sharing.on"
 
 // lanIPs returns this PC's private IPv4 addresses on active interfaces,
 // the one used for internet traffic first.
@@ -73,12 +74,24 @@ func allowedClient(a net.Addr) bool {
 	return ok && (t.IP.IsPrivate() || t.IP.IsLoopback() || t.IP.IsLinkLocalUnicast())
 }
 
-func (a *App) markerPath() string { return filepath.Join(a.Dir, lanMarker) }
+// migrateLANMarker moves the old "lan-sharing.on" marker file into settings.json.
+func (a *App) migrateLANMarker() {
+	marker := filepath.Join(a.Dir, legacyLANMarker)
+	if _, err := os.Stat(marker); err != nil {
+		return
+	}
+	if err := a.Settings.Update(func(s *settings.Settings) { s.LANSharing = true }); err == nil {
+		os.Remove(marker)
+	}
+}
 
 // LANWanted reports whether sharing was left on last time.
-func (a *App) LANWanted() bool {
-	_, err := os.Stat(a.markerPath())
-	return err == nil
+func (a *App) LANWanted() bool { return a.Settings.Get().LANSharing }
+
+func (a *App) saveLAN(on bool) {
+	if err := a.Settings.Update(func(s *settings.Settings) { s.LANSharing = on }); err != nil {
+		logx.Info.Printf("cannot save settings: %v", err)
+	}
 }
 
 // EnableLAN also serves the proxy on this PC's private LAN addresses so other
@@ -102,7 +115,7 @@ func (a *App) EnableLAN() error {
 	if len(a.lan) == 0 {
 		return errors.New("no LAN address found - is this PC connected to your Wi-Fi/router?")
 	}
-	os.WriteFile(a.markerPath(), nil, 0o644)
+	a.saveLAN(true)
 	logx.Info.Printf("LAN sharing ON, devices can use: %v", a.lanURLs())
 	return nil
 }
@@ -115,7 +128,7 @@ func (a *App) DisableLAN() {
 		ln.Close()
 	}
 	a.lan = nil
-	os.Remove(a.markerPath())
+	a.saveLAN(false)
 	logx.Info.Println("LAN sharing OFF")
 }
 

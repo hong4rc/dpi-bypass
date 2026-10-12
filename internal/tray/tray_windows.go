@@ -1,5 +1,6 @@
-// Package tray is the Windows system-tray UI: status, on/off, test, logs,
-// skip list, start with Windows, quit.
+// Package tray is the Windows system-tray icon. Quick, simple actions live in
+// its menu; things that need room to read or edit (devices, activity, live
+// logs, skip list, phone setup) live in the dashboard it opens.
 package tray
 
 import (
@@ -8,11 +9,12 @@ import (
 	"strings"
 	"syscall"
 
+	"fyne.io/systray"
 	"golang.org/x/sys/windows"
 
-	"fyne.io/systray"
-
 	"dpi/internal/app"
+	"dpi/internal/autostart"
+	"dpi/internal/logx"
 	"dpi/internal/notify"
 )
 
@@ -29,17 +31,19 @@ func Run(a *app.App) {
 
 func build(a *app.App) {
 	systray.SetTooltip("DPI bypass " + a.Version)
+	systray.SetOnTapped(func() { openBrowser(a.DashboardURL()) }) // left click
+
 	mStatus := systray.AddMenuItem("", "")
 	mStatus.Disable()
 	mToggle := systray.AddMenuItem("", "")
-	mTest := systray.AddMenuItem("Test Steam connection", "Open Steam through the bypass and report")
 	systray.AddSeparator()
-	mLAN := systray.AddMenuItemCheckbox("Allow other devices (iPhone, Android...)", "Share the bypass on your Wi-Fi", a.LANEnabled())
+	mLAN := systray.AddMenuItemCheckbox("Share with other devices", "Let phones and other PCs on your Wi-Fi use the bypass", a.LANEnabled())
 	mURL := systray.AddMenuItem("", "Click to copy this address")
 	systray.AddSeparator()
-	mLog := systray.AddMenuItem("Open log", "")
-	mSkip := systray.AddMenuItem("Edit skip list (blacklist)", "Domains that connect directly")
-	mAuto := systray.AddMenuItemCheckbox("Start with Windows", "", autostartEnabled())
+	mTest := systray.AddMenuItem("Test Steam connection", "Open Steam through the bypass and report")
+	mDash := systray.AddMenuItem("Open dashboard", "Devices, activity, logs, skip list")
+	mClear := systray.AddMenuItem("Clear log", "Empty the log files and the dashboard log")
+	mAuto := systray.AddMenuItemCheckbox("Start with Windows", "", autostart.Enabled())
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "")
 
@@ -78,8 +82,6 @@ func build(a *app.App) {
 					a.Enable()
 				}
 				render()
-			case <-mTest.ClickedCh:
-				go func() { notify.Send("DPI bypass test", a.Test()) }()
 			case <-mLAN.ClickedCh:
 				if a.LANEnabled() {
 					a.DisableLAN()
@@ -99,17 +101,22 @@ func build(a *app.App) {
 					copyText(urls[0])
 					go notify.Send("Copied", urls[0])
 				}
-			case <-mLog.ClickedCh:
-				exec.Command("notepad", a.LogPath()).Start()
-			case <-mSkip.ClickedCh:
-				exec.Command("notepad", a.BL.Path()).Start()
+			case <-mTest.ClickedCh:
+				go func() { _, msg := a.Check(); notify.Send("DPI bypass test", msg) }()
+			case <-mDash.ClickedCh:
+				openBrowser(a.DashboardURL())
+			case <-mClear.ClickedCh:
+				logx.Clear()
+				logx.Info.Println("log cleared from the tray menu")
 			case <-mAuto.ClickedCh:
-				if err := setAutostart(!mAuto.Checked()); err == nil {
-					if mAuto.Checked() {
-						mAuto.Uncheck()
-					} else {
-						mAuto.Check()
-					}
+				if err := autostart.Set(!mAuto.Checked()); err != nil {
+					go notify.Send("Cannot change start with Windows", err.Error())
+					break
+				}
+				if mAuto.Checked() {
+					mAuto.Uncheck()
+				} else {
+					mAuto.Check()
 				}
 			case <-mQuit.ClickedCh:
 				a.Quit()
@@ -119,6 +126,13 @@ func build(a *app.App) {
 			}
 		}
 	}()
+}
+
+// openBrowser opens url in the default browser without flashing a console window.
+func openBrowser(url string) {
+	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	cmd.Start()
 }
 
 // copyText puts s on the clipboard using clip.exe (hidden, no console flash).

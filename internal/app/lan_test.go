@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -52,11 +53,48 @@ func TestEnableAndDisableLAN(t *testing.T) {
 	if a.LANEnabled() || a.LANWanted() {
 		t.Fatal("still enabled after DisableLAN")
 	}
-	if _, err := os.Stat(a.markerPath()); err == nil {
-		t.Fatal("marker file not removed")
-	}
 	if c, err := net.DialTimeout("tcp", hostPort, time.Second); err == nil {
 		c.Close()
 		t.Fatal("LAN listener still accepting after DisableLAN")
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "settings.json")); !strings.Contains(string(data), `"lanSharing": false`) {
+		t.Fatalf("settings.json should say sharing is off: %q", data)
+	}
+}
+
+func TestLANSettingSurvivesARestart(t *testing.T) {
+	if len(lanIPs()) == 0 {
+		t.Skip("no private LAN address on this machine")
+	}
+	dir := t.TempDir()
+	a := New(dir, "127.0.0.1:0", "test")
+	if a.LANWanted() {
+		t.Fatal("sharing must start off")
+	}
+	if err := a.EnableLAN(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.DisableLAN()
+
+	if !New(dir, "127.0.0.1:0", "test").LANWanted() {
+		t.Fatal("a new run must see that sharing was left on")
+	}
+}
+
+// Earlier versions stored the choice as an empty "lan-sharing.on" file.
+func TestOldMarkerFileMovesIntoSettings(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, legacyLANMarker)
+	os.WriteFile(marker, nil, 0o644)
+
+	a := New(dir, "127.0.0.1:0", "test")
+	if !a.LANWanted() {
+		t.Fatal("old marker should turn the setting on")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("old marker should be removed after migrating")
+	}
+	if !New(dir, "127.0.0.1:0", "test").LANWanted() {
+		t.Fatal("migrated setting was not saved")
 	}
 }

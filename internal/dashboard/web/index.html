@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DPI bypass</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a1b26'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%237aa2f7'/%3E%3C/svg%3E">
+<style>
+/* Tokyo Night (dark) with Tokyo Night Day for light mode. Depth comes from tone, not borders. */
+:root{
+  --bg:#1a1b26; --deep:#16161e; --s1:#1f2335; --s2:#24283b; --s3:#2f334d;
+  --text:#c0caf5; --dim:#9aa5ce; --muted:#565f89;
+  --accent:#7aa2f7; --on-accent:#16161e;
+  --green:#9ece6a; --red:#f7768e; --yellow:#e0af68; --purple:#bb9af7;
+  --accent-bg:rgba(122,162,247,.16); --ok-bg:rgba(158,206,106,.15); --bad-bg:rgba(247,118,142,.15); --warn-bg:rgba(224,175,104,.15);
+  --hover:rgba(122,162,247,.08);
+  --mono:"JetBrains Mono","Cascadia Code","Fira Code",ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;
+}
+@media (prefers-color-scheme:light){
+  :root{
+    --bg:#e1e2e7; --deep:#d5d6e0; --s1:#eceef5; --s2:#f4f5fa; --s3:#d3d6e6;
+    --text:#343b58; --dim:#565a6e; --muted:#848cb5;
+    --accent:#2e7de9; --on-accent:#ffffff;
+    --green:#587539; --red:#d6244f; --yellow:#8c6c3e; --purple:#7847bd;
+    --accent-bg:rgba(46,125,233,.14); --ok-bg:rgba(88,117,57,.15); --bad-bg:rgba(214,36,79,.12); --warn-bg:rgba(140,108,62,.16);
+    --hover:rgba(46,125,233,.07);
+  }
+}
+*{box-sizing:border-box}
+html{scrollbar-color:var(--s3) transparent}
+body{margin:0;background:var(--bg);color:var(--text);font:13.5px/1.65 var(--mono);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+h2{margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:.02em}
+h2:before{content:"# ";color:var(--accent)}
+p{margin:6px 0;color:var(--dim)}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono)}
+.spacer{flex:1}
+
+/* header */
+header{background:var(--deep);position:sticky;top:0;z-index:5}
+.top{display:flex;align-items:center;gap:14px;padding:14px 0 6px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:15px;color:var(--accent);letter-spacing:.01em}
+.brand:before{content:"> ";color:var(--muted)}
+.ver{color:var(--muted);font-weight:400;font-size:12px;margin-left:4px}
+.state{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--red)}
+.state .dot{width:9px;height:9px;border-radius:50%;background:currentColor}
+.on .state{color:var(--green)}
+.on .state .dot{box-shadow:0 0 0 4px var(--ok-bg)}
+nav{display:flex;gap:2px;overflow-x:auto}
+nav button{background:none;border:0;color:var(--muted);padding:10px 14px;font:inherit;cursor:pointer;white-space:nowrap;border-radius:8px 8px 0 0;transition:color .12s,background .12s}
+nav button:hover{color:var(--text);background:var(--hover)}
+nav button[aria-selected=true]{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+nav .n{background:var(--s3);color:var(--dim);border-radius:6px;padding:0 6px;font-size:11px;margin-left:6px}
+
+main.wrap{padding-top:22px;padding-bottom:70px}
+section{display:none}section.active{display:block}
+
+/* surfaces */
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));margin-top:14px}
+.card{background:var(--s1);border-radius:14px;padding:18px 20px}
+.row{display:flex;align-items:center;gap:12px;justify-content:space-between}
+.stats{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(125px,1fr))}
+.stat{background:var(--s1);border-radius:14px;padding:14px 16px}
+.stat b{display:block;font-size:24px;font-weight:700;color:var(--text);letter-spacing:-.02em}
+.stat span{color:var(--muted);font-size:12px}
+.stat.good b{color:var(--green)}.stat.bad b{color:var(--red)}.stat.warn b{color:var(--yellow)}
+
+/* buttons: flat and tonal, no outlines */
+.btn{background:var(--accent);color:var(--on-accent);border:0;border-radius:10px;padding:8px 16px;font:inherit;font-weight:700;cursor:pointer;transition:filter .12s,background .12s;white-space:nowrap}
+.btn:hover{filter:brightness(1.1)}
+.btn:active{filter:brightness(.95)}
+.btn.ghost{background:var(--s3);color:var(--text)}
+.btn.ghost:hover{filter:brightness(1.15)}
+.btn.danger{background:var(--bad-bg);color:var(--red)}
+.btn.small{padding:3px 11px;border-radius:8px;font-size:12px;font-weight:600}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+
+/* switch (Material 3 style) */
+.switch{position:relative;width:46px;height:26px;flex:none}
+.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch span{position:absolute;inset:0;background:var(--s3);border-radius:99px;transition:background .15s;cursor:pointer}
+.switch span:before{content:"";position:absolute;width:14px;height:14px;left:6px;top:6px;background:var(--muted);border-radius:50%;transition:all .15s}
+.switch input:checked+span{background:var(--accent)}
+.switch input:checked+span:before{width:18px;height:18px;left:24px;top:4px;background:var(--on-accent)}
+.switch input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+
+/* inputs: filled, focus ring instead of border */
+input[type=text],select{background:var(--s2);color:var(--text);border:0;border-radius:10px;padding:8px 12px;font:inherit}
+input[type=text]::placeholder{color:var(--muted)}
+input[type=text]:focus,select:focus{outline:2px solid var(--accent);outline-offset:0}
+input[type=text]{min-width:220px}
+select{cursor:pointer;padding-right:8px}
+label.chk{display:flex;gap:7px;align-items:center;cursor:pointer;color:var(--dim)}
+input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+
+/* tables: tone and spacing only */
+.tablewrap{background:var(--s1);border-radius:14px;overflow:auto}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 14px;text-align:left;vertical-align:middle}
+th{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding-top:14px}
+tbody tr{transition:background .1s}
+tbody tr:hover{background:var(--hover)}
+tbody tr+tr td{box-shadow:inset 0 1px 0 rgba(128,140,200,.07)}
+
+/* badges */
+.badge{display:inline-block;padding:1px 9px;border-radius:6px;font-size:11px;font-weight:700;background:var(--s3);color:var(--dim)}
+.badge.bypass{background:var(--ok-bg);color:var(--green)}
+.badge.auto-skip{background:var(--warn-bg);color:var(--yellow)}
+.badge.failed{background:var(--bad-bg);color:var(--red)}
+.live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--s3);margin-right:9px}
+.live.active{background:var(--green)}
+
+/* misc */
+.testrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
+.result{margin-top:12px;padding:9px 12px;border-radius:10px;display:none}
+.result.ok{display:block;background:var(--ok-bg);color:var(--green)}
+.result.bad{display:block;background:var(--bad-bg);color:var(--red)}
+.url{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.url code{background:var(--s2);border-radius:8px;padding:4px 10px;word-break:break-all;color:var(--cyan,var(--accent))}
+ol{margin:8px 0 0 18px;padding:0;color:var(--dim)}
+li{margin:3px 0}
+.empty{padding:34px;text-align:center;color:var(--muted);background:var(--s1);border-radius:14px}
+#logbox{background:var(--deep);border-radius:14px;height:60vh;overflow:auto;padding:12px 16px;font-size:12.5px;line-height:1.6}
+#logbox div{white-space:pre-wrap;word-break:break-all}
+.l-bad{color:var(--red)}.l-warn{color:var(--yellow)}.l-debug{color:var(--muted)}
+#skipInput{flex:1;min-width:260px;max-width:480px}
+#toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--s3);color:var(--text);padding:10px 18px;border-radius:12px;opacity:0;pointer-events:none;transition:all .2s;max-width:90vw;z-index:10;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+#toast.show{opacity:1;transform:translateX(-50%)}
+footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
+</style>
+</head>
+<body>
+<header id="hdr">
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">dpi-bypass<span class="ver" id="ver"></span></div>
+      <div class="state"><span class="dot"></span><span id="pill">off</span></div>
+      <div class="spacer"></div>
+      <span class="muted" id="topLabel">bypass</span>
+      <label class="switch" title="Turn the bypass on or off for this PC"><input type="checkbox" id="topToggle"><span></span></label>
+    </div>
+    <nav id="tabs" role="tablist">
+      <button role="tab" data-tab="overview" aria-selected="true">Overview</button>
+      <button role="tab" data-tab="devices" aria-selected="false">Devices<span class="n" id="nDevices">0</span></button>
+      <button role="tab" data-tab="activity" aria-selected="false">Activity</button>
+      <button role="tab" data-tab="logs" aria-selected="false">Logs</button>
+      <button role="tab" data-tab="skip" aria-selected="false">Skip list<span class="n" id="nSkip">0</span></button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="s-overview" class="active">
+  <div class="stats" id="stats"></div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="row"><h2>This PC</h2><span class="badge" id="bypassBadge">off</span></div>
+      <p id="bypassText">Turn the bypass on and blocked HTTPS sites (like Steam) open normally on this PC.</p>
+      <div class="testrow">
+        <button class="btn" id="testBtn">Test Steam connection</button>
+        <span class="muted" id="testHint">opens store.steampowered.com through the bypass</span>
+      </div>
+      <div class="result" id="testResult"></div>
+    </div>
+
+    <div class="card">
+      <div class="row"><h2>Share with other devices</h2>
+        <label class="switch"><input type="checkbox" id="lanToggle"><span></span></label></div>
+      <p id="lanText">Lets phones and other PCs on your Wi-Fi use the bypass too.</p>
+      <div id="lanOn" hidden>
+        <div class="muted">Address to enter on the device:</div>
+        <div id="lanUrls"></div>
+        <ol>
+          <li>iPhone: Settings &gt; Wi-Fi &gt; (i) &gt; Configure Proxy &gt; Automatic</li>
+          <li>Android: Wi-Fi &gt; network &gt; Advanced &gt; Proxy &gt; Proxy Auto-Config</li>
+          <li>Paste the address above. The device then appears under <b>Devices</b>.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>About</h2>
+      <p>Dashboard: <span id="dashUrl" style="color:var(--accent)"></span></p>
+      <p>Only this PC can open the dashboard. Other devices can only fetch the proxy address.</p>
+      <p class="muted">Start with Windows, Quit and Clear log are in the tray icon menu.</p>
+    </div>
+  </div>
+</section>
+
+<section id="s-devices">
+  <div class="toolbar"><span class="muted">Devices that fetched the proxy address or used the proxy. Click a name to rename it.</span></div>
+  <div id="devicesBody"></div>
+</section>
+
+<section id="s-activity">
+  <div class="toolbar">
+    <select id="modeFilter">
+      <option value="">All connections</option>
+      <option value="bypass">Bypassed</option>
+      <option value="direct">Direct</option>
+      <option value="auto-skip">Auto-skipped</option>
+      <option value="failed">Failed</option>
+    </select>
+    <input type="text" id="actSearch" placeholder="Filter by site or device">
+    <span class="muted">Newest first. "Skip" sends a site direct from now on.</span>
+  </div>
+  <div id="activityBody"></div>
+</section>
+
+<section id="s-logs">
+  <div class="toolbar">
+    <label class="chk"><input type="checkbox" id="lvInfo" checked> info</label>
+    <label class="chk"><input type="checkbox" id="lvDebug"> debug</label>
+    <input type="text" id="logSearch" placeholder="Search the log">
+    <button class="btn ghost small" id="pauseBtn">Pause</button>
+    <button class="btn ghost small" id="clearBtn" title="Empties the log files and this view">Clear log</button>
+    <button class="btn ghost small" id="copyLog">Copy</button>
+    <span class="muted" id="logCount"></span>
+  </div>
+  <div id="logbox" aria-live="off"></div>
+</section>
+
+<section id="s-skip">
+  <div class="toolbar">
+    <input type="text" id="skipInput" placeholder="example.com  (a domain also covers its subdomains)">
+    <button class="btn" id="skipAdd">Add to skip list</button>
+  </div>
+  <p>Sites here connect directly, without the bypass. Use it for games or apps that break when the bypass is on. Sites that fail with the bypass are added automatically and marked <span class="badge auto-skip">auto</span>. Changes apply right away.</p>
+  <div id="skipBody" style="margin-top:14px"></div>
+</section>
+
+</main>
+<footer>only this PC can open this page &middot; <span id="up"></span></footer>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(path, method = 'GET', body) {
+  const opt = { method, headers: { 'X-Requested-With': 'dpi' } };
+  if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  let data = null; try { data = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+  return data;
+}
+let toastTimer;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3200); }
+const guarded = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message); refreshState(); } };
+
+function fmtBytes(n) { if (!n) return '0 B'; const u = ['B','KB','MB','GB','TB']; let i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024))); return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i]; }
+function ago(t) { const s = Math.max(0, (Date.now() - new Date(t).getTime()) / 1000); if (s < 10) return 'just now'; if (s < 60) return Math.floor(s) + ' s ago'; if (s < 3600) return Math.floor(s / 60) + ' min ago'; if (s < 86400) return Math.floor(s / 3600) + ' h ago'; return Math.floor(s / 86400) + ' d ago'; }
+function dur(sec) { const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60); return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'm'; }
+const hostOf = hp => hp.replace(/:\d+$/, '');
+
+/* ---------- tabs ---------- */
+let tab = 'overview';
+function showTab(name) {
+  tab = name;
+  document.querySelectorAll('nav button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name));
+  document.querySelectorAll('main section').forEach(s => s.classList.toggle('active', s.id === 's-' + name));
+  history.replaceState(null, '', '#' + name);
+  refreshTab();
+}
+$('tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); });
+
+/* ---------- overview ---------- */
+let state = null;
+async function refreshState() {
+  try { render(await api('/api/state')); } catch (e) { $('pill').textContent = 'offline'; }
+}
+function render(s) {
+  state = s;
+  document.title = 'DPI bypass - ' + (s.on ? 'on' : 'off');
+  $('hdr').classList.toggle('on', s.on);
+  $('pill').textContent = s.on ? 'on' : 'off';
+  $('ver').textContent = s.version;
+  $('topToggle').checked = s.on;
+  $('topLabel').textContent = s.on ? 'bypass on' : 'bypass off';
+  $('bypassBadge').textContent = s.on ? 'on' : 'off';
+  $('bypassBadge').className = 'badge' + (s.on ? ' bypass' : '');
+  $('bypassText').textContent = s.on
+    ? 'Blocked HTTPS sites (like Steam) open normally on this PC. Your previous proxy settings come back when you turn it off or quit.'
+    : 'The bypass is off: this PC uses your normal network settings. Turn it on to open blocked sites.';
+  $('lanToggle').checked = s.lan.enabled;
+  $('lanOn').hidden = !s.lan.enabled;
+  $('lanUrls').innerHTML = s.lan.urls.map(u => '<div class="url"><code>' + esc(u) + '</code><button class="btn ghost small" data-copy="' + esc(u) + '">Copy</button></div>').join('');
+  $('dashUrl').textContent = location.origin + '/';
+  $('nDevices').textContent = s.deviceCount;
+  $('nSkip').textContent = s.skipCount;
+  $('up').textContent = 'running ' + dur(s.uptimeSec);
+  const t = s.totals;
+  $('stats').innerHTML = [
+    ['Connections', t.conns, ''], ['Bypassed', t.bypass, 'good'], ['Direct', t.direct, ''],
+    ['Auto-skipped', t.autoSkip, t.autoSkip ? 'warn' : ''], ['Failed', t.failed, t.failed ? 'bad' : ''],
+    ['Downloaded', fmtBytes(t.down), ''], ['Uploaded', fmtBytes(t.up), ''],
+  ].map(([k, v, c]) => '<div class="stat ' + c + '"><b>' + esc(v) + '</b><span>' + esc(k) + '</span></div>').join('');
+}
+$('topToggle').addEventListener('change', guarded(async e => render(await api('/api/bypass', 'POST', { on: e.target.checked }))));
+$('lanToggle').addEventListener('change', guarded(async e => {
+  render(await api('/api/lan', 'POST', { on: e.target.checked }));
+  if (e.target.checked) toast('Sharing is on. Enter the address on your phone.');
+}));
+document.addEventListener('click', guarded(async e => {
+  const c = e.target.closest('[data-copy]');
+  if (c) { await navigator.clipboard.writeText(c.dataset.copy); toast('Copied'); }
+}));
+$('testBtn').addEventListener('click', guarded(async () => {
+  const b = $('testBtn'), r = $('testResult'); b.disabled = true; b.textContent = 'Testing...'; r.className = 'result';
+  try { const x = await api('/api/test', 'POST'); r.textContent = x.message; r.className = 'result ' + (x.ok ? 'ok' : 'bad'); }
+  finally { b.disabled = false; b.textContent = 'Test Steam connection'; }
+}));
+
+/* ---------- devices ---------- */
+async function loadDevices() {
+  const list = await api('/api/devices');
+  if (!list.length) {
+    $('devicesBody').innerHTML = '<div class="empty">No devices yet. This PC shows up after its first connection. For a phone, turn on <b>Share with other devices</b> on the Overview tab and enter the address on the phone.</div>'; return;
+  }
+  $('devicesBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Device</th><th>Address</th><th>MAC</th><th>Last seen</th><th>Connections</th><th>Traffic</th></tr></thead><tbody>' +
+    list.map(d => {
+      // name you gave it > hostname > what it says it is (User-Agent) > unknown
+      const agents = d.agents || [];
+      const title = d.name || (d.self ? 'This PC' : (d.hostname || agents[0] || 'Unknown device'));
+      const extra = [d.hostname, ...agents].filter(x => x && x !== title);
+      const sub = extra.length ? '<div class="muted" style="font-size:12px">' + esc(extra.join(' · ')) + '</div>' : '';
+      return '<tr><td><span class="live ' + (d.active ? 'active' : '') + '" title="' + (d.active ? 'active now' : 'idle') + '"></span>' +
+        '<a href="#" data-rename="' + esc(d.ip) + '" data-name="' + esc(d.name) + '" title="Rename">' + esc(title) + '</a>' + sub + '</td>' +
+        '<td>' + esc(d.ip) + '</td><td class="muted">' + esc(d.mac || '-') + '</td>' +
+        '<td>' + esc(ago(d.last)) + '</td><td>' + d.conns + (d.pacFetches ? ' <span class="muted">(+' + d.pacFetches + ' setup fetches)</span>' : '') + '</td>' +
+        '<td>' + esc(fmtBytes(d.down)) + ' <span class="muted">down</span> / ' + esc(fmtBytes(d.up)) + ' <span class="muted">up</span></td></tr>';
+    }).join('') + '</tbody></table></div>';
+}
+document.addEventListener('click', guarded(async e => {
+  const a = e.target.closest('[data-rename]'); if (!a) return;
+  e.preventDefault();
+  const name = prompt('Name for ' + a.dataset.rename + ' (empty clears it):', a.dataset.name);
+  if (name === null) return;
+  await api('/api/devices/name', 'POST', { ip: a.dataset.rename, name }); loadDevices();
+}));
+
+/* ---------- activity ---------- */
+const modeLabel = { bypass: 'bypassed', direct: 'direct', 'auto-skip': 'auto-skipped', failed: 'failed' };
+let events = [];
+async function loadActivity() { events = await api('/api/connections?limit=300'); renderActivity(); }
+function renderActivity() {
+  const mode = $('modeFilter').value, q = $('actSearch').value.trim().toLowerCase();
+  const rows = events.filter(e => (!mode || e.mode === mode) && (!q || (e.host + ' ' + e.client).toLowerCase().includes(q)));
+  if (!rows.length) { $('activityBody').innerHTML = '<div class="empty">' + (events.length ? 'Nothing matches the filter.' : 'No connections yet. Open a website and it will show up here.') + '</div>'; return; }
+  $('activityBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Time</th><th>Device</th><th>Site</th><th>Result</th><th>Size</th><th>Took</th><th></th></tr></thead><tbody>' +
+    rows.map(e => '<tr><td class="muted">' + esc(new Date(e.time).toLocaleTimeString()) + '</td><td>' + esc(e.client === '127.0.0.1' ? 'this PC' : e.client) + '</td>' +
+      '<td>' + esc(e.host) + (e.err ? '<div class="muted" style="font-size:12px">' + esc(e.err) + '</div>' : '') + '</td>' +
+      '<td><span class="badge ' + esc(e.mode) + '">' + esc(modeLabel[e.mode] || e.mode) + '</span></td>' +
+      '<td class="muted">' + esc(fmtBytes(e.down + e.up)) + '</td><td class="muted">' + e.ms + ' ms</td>' +
+      '<td style="text-align:right">' + (e.mode === 'direct' ? '' : '<button class="btn ghost small" data-skip="' + esc(hostOf(e.host)) + '">Skip</button>') + '</td></tr>').join('') + '</tbody></table></div>';
+}
+$('modeFilter').addEventListener('change', renderActivity);
+$('actSearch').addEventListener('input', renderActivity);
+document.addEventListener('click', guarded(async e => {
+  const b = e.target.closest('[data-skip]'); if (!b) return;
+  await api('/api/skip', 'POST', { host: b.dataset.skip }); toast(b.dataset.skip + ' now connects directly'); refreshState();
+}));
+
+/* ---------- logs ---------- */
+let lines = [], lastSeq = 0, paused = false, es = null, queued = false;
+function addLines(arr) {
+  for (const l of arr) if (l.seq > lastSeq) { lines.push(l); lastSeq = l.seq; }
+  if (lines.length > 3000) lines = lines.slice(-3000);
+  if (!paused && tab === 'logs' && !queued) { queued = true; requestAnimationFrame(() => { queued = false; renderLogs(); }); }
+}
+function lineClass(l) {
+  if (l.level === 'debug') return 'l-debug';
+  if (/FAIL|BLOCKED|NO REPLY/.test(l.text)) return 'l-bad';
+  if (/AUTO-SKIP|skip list/.test(l.text)) return 'l-warn';
+  return '';
+}
+function visibleLines() {
+  const info = $('lvInfo').checked, dbg = $('lvDebug').checked, q = $('logSearch').value.trim().toLowerCase();
+  return lines.filter(l => (l.level === 'info' ? info : dbg) && (!q || l.text.toLowerCase().includes(q)));
+}
+function renderLogs() {
+  const box = $('logbox'), stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const v = visibleLines().slice(-1500);
+  box.innerHTML = v.map(l => '<div class="' + lineClass(l) + '">' + esc(l.text) + '</div>').join('');
+  $('logCount').textContent = v.length + ' lines' + (paused ? ' (paused)' : '');
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+async function startLogs() {
+  es = new EventSource('/api/logs/stream');
+  es.onmessage = m => addLines([JSON.parse(m.data)]);
+  addLines(await api('/api/logs?limit=1500'));
+}
+['lvInfo', 'lvDebug'].forEach(id => $(id).addEventListener('change', renderLogs));
+$('logSearch').addEventListener('input', renderLogs);
+$('pauseBtn').addEventListener('click', () => { paused = !paused; $('pauseBtn').textContent = paused ? 'Resume' : 'Pause'; renderLogs(); });
+$('clearBtn').addEventListener('click', guarded(async () => { await api('/api/logs/clear', 'POST'); lines = []; renderLogs(); toast('Log cleared'); }));
+$('copyLog').addEventListener('click', guarded(async () => { await navigator.clipboard.writeText(visibleLines().map(l => l.text).join('\n')); toast('Log copied'); }));
+
+/* ---------- skip list ---------- */
+async function loadSkip() {
+  const list = await api('/api/skip');
+  if (!list.length) { $('skipBody').innerHTML = '<div class="empty">The skip list is empty.</div>'; return; }
+  $('skipBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Domain</th><th>Note</th><th></th></tr></thead><tbody>' +
+    list.map(e => '<tr><td>' + esc(e.host) + '</td><td>' + (/^auto-skip/.test(e.note) ? '<span class="badge auto-skip">auto</span> <span class="muted">' + esc(e.note.replace(/^auto-skip\s*/, '') || 'added automatically') + '</span>' : '<span class="muted">' + esc(e.note) + '</span>') + '</td>' +
+      '<td style="text-align:right"><button class="btn danger small" data-unskip="' + esc(e.host) + '">Remove</button></td></tr>').join('') + '</tbody></table></div>';
+}
+const addSkip = guarded(async () => {
+  const v = $('skipInput').value.trim(); if (!v) return;
+  await api('/api/skip', 'POST', { host: v }); $('skipInput').value = ''; loadSkip(); refreshState();
+});
+$('skipAdd').addEventListener('click', addSkip);
+$('skipInput').addEventListener('keydown', e => { if (e.key === 'Enter') addSkip(); });
+document.addEventListener('click', guarded(async e => {
+  const b = e.target.closest('[data-unskip]'); if (!b) return;
+  await api('/api/skip?host=' + encodeURIComponent(b.dataset.unskip), 'DELETE'); loadSkip(); refreshState();
+}));
+
+/* ---------- refresh loop ---------- */
+function refreshTab() {
+  if (tab === 'devices') loadDevices().catch(() => {});
+  else if (tab === 'activity') loadActivity().catch(() => {});
+  else if (tab === 'logs') renderLogs();
+  else if (tab === 'skip') loadSkip().catch(() => {});
+}
+setInterval(() => { refreshState(); if (tab === 'devices' || tab === 'activity') refreshTab(); }, 2000);
+refreshState();
+startLogs().catch(() => {});
+const start = location.hash.slice(1); if (['overview', 'devices', 'activity', 'logs', 'skip'].includes(start)) showTab(start);
+</script>
+</body>
+</html>

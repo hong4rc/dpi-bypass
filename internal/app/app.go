@@ -1,4 +1,4 @@
-// Package app ties the proxy, blacklist and system-proxy setting together.
+// Package app ties the proxy, blacklist, stats and system-proxy setting together.
 package app
 
 import (
@@ -14,17 +14,26 @@ import (
 	"dpi/internal/logx"
 	"dpi/internal/notify"
 	"dpi/internal/proxy"
+	"dpi/internal/settings"
+	"dpi/internal/stats"
 	"dpi/internal/sysproxy"
 )
 
 const SteamURL = "https://store.steampowered.com"
 
 type App struct {
-	Version string
-	Dir     string // where the exe, logs and blacklist live
-	Addr    string
-	BL      *blacklist.List
-	Proxy   *proxy.Proxy
+	Version  string
+	Dir      string // where the exe, logs and blacklist live
+	Addr     string
+	Started  time.Time
+	BL       *blacklist.List
+	Proxy    *proxy.Proxy
+	Stats    *stats.Store
+	Settings *settings.Store
+
+	notice       skipNotice
+	noticeWindow time.Duration
+	send         func(title, msg string) // desktop notification; replaced in tests
 
 	mu   sync.Mutex
 	on   bool
@@ -34,17 +43,33 @@ type App struct {
 }
 
 func New(dir, addr, version string) *App {
-	a := &App{Version: version, Dir: dir, Addr: addr, quit: make(chan struct{})}
+	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{}),
+		noticeWindow: skipNoticeWindow, send: notify.Send}
 	a.BL = blacklist.New(filepath.Join(dir, "blacklist.txt"))
+	a.Stats = stats.New(filepath.Join(dir, "device-names.json"))
+	a.Settings = settings.Load(filepath.Join(dir, "settings.json"))
+	a.migrateLANMarker()
 	a.Proxy = proxy.New(addr, a.BL)
 	a.Proxy.OnSkip = func(host string) {
-		go notify.Send("DPI bypass", host+" works better without the bypass; added to your skip list.")
+		a.noteAutoSkip(host)
 		sysproxy.Refresh() // let apps re-read the PAC that now sends the host direct
 	}
+	a.Proxy.OnConn = func(client, hostPort, mode string, up, down int64, dur time.Duration, err error) {
+		e := stats.Event{Time: time.Now(), Client: stats.ClientIP(client), Host: hostPort, Mode: mode, Up: up, Down: down, Millis: dur.Milliseconds()}
+		if err != nil {
+			e.Err = err.Error()
+		}
+		a.Stats.AddConn(e)
+	}
+	a.Proxy.OnPAC = func(client string) { a.Stats.SeenPAC(stats.ClientIP(client)) }
+	a.Proxy.OnClient = func(client, ua string) { a.Stats.SeenAgent(stats.ClientIP(client), ua) }
 	return a
 }
 
 func (a *App) LogPath() string { return filepath.Join(a.Dir, "dpi-info.log") }
+
+// DashboardURL is where the dashboard lives (also reachable by typing it in a browser).
+func (a *App) DashboardURL() string { return "http://" + a.Addr + "/" }
 
 // Start serves the proxy on ln, turns the bypass on and watches the blacklist file.
 func (a *App) Start(ln net.Listener) {
@@ -99,15 +124,15 @@ func (a *App) watch() {
 	}
 }
 
-// Test opens Steam through the proxy and returns a one-line verdict.
-func (a *App) Test() string {
+// Check opens Steam through the proxy and returns whether it worked, with a one-line verdict.
+func (a *App) Check() (bool, string) {
 	code, err := check(a.Addr, SteamURL)
 	if err != nil {
 		logx.Info.Printf("test FAILED: %v", err)
-		return "Steam is still BLOCKED or unreachable: " + err.Error()
+		return false, "Steam is still BLOCKED or unreachable: " + err.Error()
 	}
 	logx.Info.Printf("test OK: HTTP %d", code)
-	return fmt.Sprintf("Steam works (HTTP %d). The bypass is doing its job.", code)
+	return true, fmt.Sprintf("Steam works (HTTP %d). The bypass is doing its job.", code)
 }
 
 // check does an HTTPS request through the proxy; any HTTP response proves the TLS handshake passed.
