@@ -80,6 +80,5 @@ func main() {
 	go func() { <-sig; a.Quit() }()
 
 	logx.Info.Printf("dpi-bypass %s running. Dashboard: %s  (quit from the tray menu, or Ctrl+C in a terminal)", version, a.DashboardURL())
-	go notify.Send("DPI bypass is ON", "Click the tray icon to open the dashboard.")
 	tray.Run(a)
 }

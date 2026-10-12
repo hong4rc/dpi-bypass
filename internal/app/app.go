@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"dpi/internal/blacklist"
+	"dpi/internal/identify"
 	"dpi/internal/logx"
-	"dpi/internal/notify"
 	"dpi/internal/policy"
 	"dpi/internal/proxy"
 	"dpi/internal/settings"
@@ -34,10 +34,6 @@ type App struct {
 	Migration Migration       // what the data migration at startup found and did
 	LANAddrs  func() []string // addresses to share on: the PC's private LAN addresses unless a test swaps it
 
-	skipN, bypassN *notice // batched "learned" notifications, one per kind of decision
-	noticeWindow   time.Duration
-	send           func(title, msg string) // desktop notification; replaced in tests
-
 	mu       sync.Mutex
 	on       bool
 	lan      []net.Listener // extra listeners while sharing with other devices
@@ -47,25 +43,19 @@ type App struct {
 }
 
 func New(dir, addr, version string) *App {
-	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{}),
-		noticeWindow: skipNoticeWindow, send: notify.Send}
+	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{})}
 	a.LANAddrs = lanIPs
 	a.Settings = settings.Load(filepath.Join(dir, "settings.json"))
 	a.Migration = migrate(dir, a.Settings) // before the lists are opened: they must see existing files as they are, and a new folder must stay empty
 	a.Migration.log()
-	a.skipN, a.bypassN = newNotices()
 	skip := blacklist.New(filepath.Join(dir, "blacklist.txt"), policy.SkipHeader)
 	bypass := blacklist.New(filepath.Join(dir, "bypass.txt"), policy.BypassHeader)
 	a.Policy = policy.New(skip, bypass, a.Mode)
 	a.Stats = stats.New(filepath.Join(dir, "devices.json"))
 	a.migrateLANMarker()
 	a.Proxy = proxy.New(addr, a.Policy)
-	a.Proxy.OnLearn = func(host string, d policy.Decision) {
-		if d == policy.NeedsBypass {
-			a.noteAutoBypass(host)
-		} else {
-			a.noteAutoSkip(host)
-		}
+	// A newly learned site is logged by the proxy and shown in the dashboard; it never pops up a notification.
+	a.Proxy.OnLearn = func(string, policy.Decision) {
 		sysproxy.Refresh() // let apps re-read the PAC (never-bypass sites go DIRECT)
 	}
 	a.Proxy.OnOpen = func(client, hostPort, mode string) uint64 {
@@ -79,6 +69,8 @@ func New(dir, addr, version string) *App {
 		a.Stats.Close(id, up, down, dur.Milliseconds(), text)
 	}
 	a.Proxy.OnPAC = func(client string) { a.Stats.SeenPAC(stats.ClientIP(client)) }
+	a.Proxy.ProbeHost = identify.ProbeHost
+	a.Proxy.OnProbe = func(client string) { a.Stats.SeenProbe(stats.ClientIP(client)) }
 	a.Proxy.OnClient = func(client, ua string) {
 		ip := stats.ClientIP(client)
 		if label, isNew := a.Stats.SeenAgent(ip, ua); isNew {
