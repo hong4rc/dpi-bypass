@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,6 +33,30 @@ func TestClientIPNormalizesLoopback(t *testing.T) {
 		if got := ClientIP(in); got != want {
 			t.Errorf("ClientIP(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+// Opening the dashboard (or the identify page) through the PC's own LAN address
+// must not create a second "device": it is still this PC.
+func TestThePCsOwnAddressesAreThisPC(t *testing.T) {
+	addrs, _ := net.InterfaceAddrs()
+	tried := 0
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok || n.IP.To4() == nil {
+			continue
+		}
+		tried++
+		if got := ClientIP(net.JoinHostPort(n.IP.String(), "50000")); got != "127.0.0.1" {
+			t.Errorf("this PC's own address %s became device %q, want 127.0.0.1", n.IP, got)
+		}
+	}
+	if tried == 0 {
+		t.Skip("no IPv4 interface")
+	}
+	// another machine, even one on the same subnet, stays itself
+	if got := ClientIP("203.0.113.77:1234"); got != "203.0.113.77" {
+		t.Errorf("a foreign address must stay a separate device, got %q", got)
 	}
 }
 

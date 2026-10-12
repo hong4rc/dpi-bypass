@@ -39,7 +39,7 @@ For the things that need room to read or edit. Dark Tokyo Night theme, light the
 
 Only this PC can open the dashboard: other devices get a 403, the page must be opened as `127.0.0.1` or `localhost`, and every change needs a header other websites can't send.
 
-**Identify a phone (real model):** Chrome hides the phone model in web traffic, but a page can read it with JavaScript, and only on HTTPS. So with sharing on, the PC also serves a small HTTPS page (`https://<PC-IP>:18443/identify`, certificate made fresh in memory on every start). In the dashboard's Devices tab, scan the QR code with the phone (or copy the address). The browser warns the page is not private: tap **Advanced > Proceed** once. The page reads the model and OS version (what `deviceinfo.me` shows) and sends them to the PC, and the device appears with its real name, for example `SHARK PAR-A0 · Android 12`. This does **not** change any phone setting: the proxy address is still pasted into the phone's Wi-Fi proxy setting by hand. Safari and Firefox keep the model private, so use Chrome for this step.
+**Identify a phone (real model):** Chrome hides the phone model in web traffic, but a page can read it with JavaScript, and only on HTTPS. So with sharing on, the PC also serves a small HTTPS page (`https://<PC-IP>:18443/identify`, with a self-signed certificate). In the dashboard's Devices tab, scan the QR code with the phone (or copy the address). The browser warns the page is not private: tap **Advanced > Proceed**. The page reads the model and OS version (what `deviceinfo.me` shows) and sends them to the PC, and the device appears with its real name, for example `SHARK PAR-A0 · Android 12`. **Why the warning, and can it be avoided?** Browsers only give the model to HTTPS pages, and nothing on the phone trusts a certificate the PC made itself, so the warning always appears the first time, with or without the proxy. The certificate is kept in `identify-cert.pem` next to the exe (renewed automatically when it is about to expire or the PC's address changes), so the browser's "proceed anyway" choice keeps matching after the app restarts. If you would rather not see the warning at all, skip this step and rename the device in the dashboard instead. This does **not** change any phone setting: the proxy address is still pasted into the phone's Wi-Fi proxy setting by hand. Safari and Firefox keep the model private, so use Chrome for this step.
 
 **Device names:** a device is named by you first, then by what it reported on the identify page, then by its hostname if the network knows it, then by what it says it is in its User-Agent (for example `Android 14 · SM-S918B` or `iPhone14,5 · iOS 17.2`). Hover a device name to see the raw User-Agent headers it sent; each distinct header is also written once to `dpi-debug.log` (`device 192.168.1.13 says: ...`). Chrome on Android and Safari hide the exact model in web traffic, so the model only shows when the phone's system or an app sends it (the system fetch of the proxy address often does). Otherwise rename the device once. Phones behind a second router (NAT) share one address and show up as one device with several descriptions.
 
@@ -61,7 +61,7 @@ Safety: only private LAN addresses can connect, and a device on the LAN cannot u
 
 - Quitting, Ctrl+C or a normal close restores your previous proxy setting.
 - A hidden guard process (Windows) restores it even if the app crashes or is killed.
-- The PAC falls back to a direct connection, and only `https://` traffic to public sites is sent through the proxy (LAN addresses go direct).
+- The PAC falls back to a direct connection, and only `https://` traffic to public sites is sent through the proxy. LAN addresses, plain names and local-only names (`.local`, `.lan`, `.internal` such as Docker's `host.docker.internal`, `.home.arpa`, `.localhost`, `.test`) always go direct, and the proxy never fragments a connection whose name resolves to a LAN address.
 - Still stuck? Run `dpi-bypass -restore`.
 
 ## A game or app breaks? (e.g. League of Legends)
@@ -75,6 +75,7 @@ Safety: only private LAN addresses can connect, and a device on the LAN cannot u
 |---|---|
 | `blacklist.txt` | the skip list (also editable in the dashboard) |
 | `settings.json` | saved choices, for example `{"lanSharing": true}` |
+| `identify-cert.pem` | the identify page's self-signed certificate and key (only for that page; delete it and a new one is made) |
 | `devices.json` | names you gave to devices and what phones reported on the identify page |
 | `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `NO REPLY` (recreated on every start) |
 | `dpi-debug.log` | everything: every CONNECT, timing, bytes (recreated on every start) |

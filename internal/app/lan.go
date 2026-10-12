@@ -182,7 +182,7 @@ func isVirtual(name string) bool {
 const identifyPort = "18443"
 
 // startIdentify serves the identify page over HTTPS on the same LAN addresses.
-// The certificate is made fresh in memory: nothing secret is written to disk.
+// The certificate is kept next to the exe so a browser's "proceed anyway" choice survives restarts.
 func (a *App) startIdentify(ips []string, proxyPort string) {
 	port := identifyPort
 	if proxyPort == "0" {
@@ -192,7 +192,7 @@ func (a *App) startIdentify(ips []string, proxyPort string) {
 	for _, ip := range ips {
 		parsed = append(parsed, net.ParseIP(ip))
 	}
-	cert, err := identify.SelfSigned(parsed)
+	cert, err := identify.Persistent(a.Dir, parsed)
 	if err != nil {
 		logx.Info.Printf("identify page unavailable: %v", err)
 		return

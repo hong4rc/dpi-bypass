@@ -14,10 +14,13 @@ import (
 	"crypto/x509/pkix"
 	_ "embed"
 	"encoding/json"
+	"encoding/pem"
 	"math/big"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -135,9 +138,12 @@ func browserName(b body) string {
 	return clean(pick.Brand+" "+major, 60)
 }
 
-// SelfSigned makes a throwaway certificate valid for the given addresses. It is
-// created in memory on every start, so no private key is ever written to disk.
+// SelfSigned makes a certificate valid for the given addresses, in memory only.
 func SelfSigned(ips []net.IP) (tls.Certificate, error) {
+	return selfSigned(ips, time.Now().Add(365*24*time.Hour))
+}
+
+func selfSigned(ips []net.IP, notAfter time.Time) (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, err
@@ -150,7 +156,7 @@ func SelfSigned(ips []net.IP) (tls.Certificate, error) {
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "dpi-bypass identify page"},
 		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses:  ips,
@@ -161,6 +167,58 @@ func SelfSigned(ips []net.IP) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+}
+
+// CertFile is the name of the saved certificate (next to the exe).
+const CertFile = "identify-cert.pem"
+
+// renewBefore: a saved certificate with less than this left is replaced.
+const renewBefore = 30 * 24 * time.Hour
+
+// Persistent returns the certificate saved in dir, creating it when it is
+// missing, unreadable, about to expire, or not valid for one of ips. Keeping
+// the same certificate means the browser's "proceed anyway" choice for it keeps
+// working after the app restarts, so the warning does not return every time.
+func Persistent(dir string, ips []net.IP) (tls.Certificate, error) {
+	path := filepath.Join(dir, CertFile)
+	if cert, ok := loadUsable(path, ips); ok {
+		return cert, nil
+	}
+	cert, err := SelfSigned(ips)
+	if err != nil {
+		return cert, err
+	}
+	key, err := x509.MarshalECPrivateKey(cert.PrivateKey.(*ecdsa.PrivateKey))
+	if err != nil {
+		return cert, err
+	}
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	data = append(data, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: key})...)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return cert, err // still usable this run; it just will not be remembered
+	}
+	return cert, nil
+}
+
+func loadUsable(path string, ips []net.IP) (tls.Certificate, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return tls.Certificate{}, false
+	}
+	cert, err := tls.X509KeyPair(data, data)
+	if err != nil {
+		return tls.Certificate{}, false
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil || time.Until(leaf.NotAfter) < renewBefore {
+		return tls.Certificate{}, false
+	}
+	for _, ip := range ips {
+		if leaf.VerifyHostname(ip.String()) != nil {
+			return tls.Certificate{}, false
+		}
+	}
+	return cert, true
 }
 
 // TLSListener wraps ln so connections speak TLS 1.2+ with cert.

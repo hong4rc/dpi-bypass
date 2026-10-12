@@ -196,3 +196,43 @@ func TestOnPACAndFallbackRouting(t *testing.T) {
 		t.Fatalf("OnPAC clients: %v", pacClients)
 	}
 }
+
+// host.docker.internal, *.lan, router names, ...: names that resolve to this
+// network must reach their server untouched, even when a client sends them to
+// the proxy instead of connecting directly.
+func TestNamesThatResolveToALocalAddressAreNeverSplit(t *testing.T) {
+	var fragmentedSeen int
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		h := make([]byte, 5)
+		io.ReadFull(c, h)
+		body := make([]byte, int(h[3])<<8|int(h[4]))
+		io.ReadFull(c, body)
+		if fragmented(append(h, body...)) {
+			fragmentedSeen++
+		}
+		c.Write([]byte("OK"))
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
+	p := New("127.0.0.1:0", bl)
+	p.TLSPorts[port] = true // SplitPrivate stays off, as in the real app
+	srv := httptest.NewServer(p)
+	t.Cleanup(srv.Close)
+
+	// "localhost" is a name, not an IP literal: only the resolved address says it is local
+	c := connectThroughProxy(t, strings.TrimPrefix(srv.URL, "http://"), "localhost:"+port)
+	c.Write(fakeHello(200))
+	buf := make([]byte, 2)
+	io.ReadFull(c, buf)
+	if string(buf) != "OK" || fragmentedSeen != 0 {
+		t.Fatalf("got %q, fragmented hellos seen: %d (want OK, 0)", buf, fragmentedSeen)
+	}
+}

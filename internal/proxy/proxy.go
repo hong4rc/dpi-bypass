@@ -92,7 +92,7 @@ func (p *Proxy) servePAC(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `var skip=[%s];
 function FindProxyForURL(u,h){
   if(u.indexOf("https:")!=0)return "DIRECT";
-  if(isPlainHostName(h)||dnsDomainIs(h,".local"))return "DIRECT";
+  if(isPlainHostName(h)||/\.(local|localhost|internal|lan|home\.arpa|localdomain|test)$/i.test(h))return "DIRECT";
   if(/^\d+\.\d+\.\d+\.\d+$/.test(h)&&(isInNet(h,"10.0.0.0","255.0.0.0")||isInNet(h,"172.16.0.0","255.240.0.0")||isInNet(h,"192.168.0.0","255.255.0.0")||isInNet(h,"127.0.0.0","255.0.0.0")||isInNet(h,"169.254.0.0","255.255.0.0")))return "DIRECT";
   for(var i=0;i<skip.length;i++)if(h==skip[i]||dnsDomainIs(h,"."+skip[i]))return "DIRECT";
   return "PROXY %s; DIRECT";
@@ -191,7 +191,7 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 		up.Close()
 		return nil, nil, "", err
 	}
-	if hello[0] != 0x16 || p.bl.Match(host) || (!p.SplitPrivate && isPrivate(host)) { // not TLS, or told to skip: forward untouched
+	if hello[0] != 0x16 || p.bl.Match(host) || (!p.SplitPrivate && (isPrivate(host) || isPrivateAddr(up.RemoteAddr()))) { // not TLS, or told to skip: forward untouched
 		if _, err := up.Write(hello); err != nil {
 			up.Close()
 			return nil, nil, "", err

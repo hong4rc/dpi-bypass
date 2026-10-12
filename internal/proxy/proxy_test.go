@@ -70,7 +70,7 @@ func TestPACSendsBlacklistDirect(t *testing.T) {
 	rec := httptest.NewRecorder()
 	New("127.0.0.1:18080", bl).ServeHTTP(rec, httptest.NewRequest("GET", "/proxy.pac", nil))
 	body := rec.Body.String()
-	for _, want := range []string{`"riotgames.com"`, "PROXY 127.0.0.1:18080", `return "DIRECT"`, "isPlainHostName", `isInNet(h,"192.168.0.0"`} {
+	for _, want := range []string{`"riotgames.com"`, "PROXY 127.0.0.1:18080", `return "DIRECT"`, "isPlainHostName", `isInNet(h,"192.168.0.0"`, "localhost|internal|lan"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("PAC missing %q:\n%s", want, body)
 		}

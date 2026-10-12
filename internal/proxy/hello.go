@@ -17,6 +17,14 @@ func isPrivate(host string) bool {
 	return ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast())
 }
 
+// isPrivateAddr reports whether a connection's far end is a loopback, LAN or
+// link-local address, whatever name was used to reach it (host.docker.internal
+// and other names that only exist on this network resolve to such addresses).
+func isPrivateAddr(a net.Addr) bool {
+	t, ok := a.(*net.TCPAddr)
+	return ok && (t.IP.IsPrivate() || t.IP.IsLoopback() || t.IP.IsLinkLocalUnicast())
+}
+
 // readFirst waits briefly for the server's first bytes; nil means no reply.
 func readFirst(c net.Conn) []byte {
 	buf := make([]byte, 32<<10)

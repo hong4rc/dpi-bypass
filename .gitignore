@@ -7,3 +7,5 @@ device-names.json
 lan-sharing.on
 plans/
 *.exe~
+identify-cert.pem
+devices.json

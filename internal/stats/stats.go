@@ -82,16 +82,42 @@ func New(path string) *Store {
 	return s
 }
 
-// ClientIP turns a RemoteAddr into the key used for devices; loopback is one device.
+// ClientIP turns a RemoteAddr into the key used for devices. Loopback and every
+// address of this PC itself (for example when you open the dashboard through the
+// PC's LAN address) are one device: "This PC".
 func ClientIP(remoteAddr string) string {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		host = remoteAddr
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || isOwnAddress(ip)) {
 		return "127.0.0.1"
 	}
 	return host
+}
+
+// own caches the addresses of this PC's network interfaces for a short while:
+// ClientIP runs for every connection and the list rarely changes.
+var own struct {
+	mu  sync.Mutex
+	at  time.Time
+	set map[string]bool
+}
+
+func isOwnAddress(ip net.IP) bool {
+	own.mu.Lock()
+	defer own.mu.Unlock()
+	if own.set == nil || time.Since(own.at) > 30*time.Second {
+		own.set = map[string]bool{}
+		addrs, _ := net.InterfaceAddrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok {
+				own.set[n.IP.String()] = true
+			}
+		}
+		own.at = time.Now()
+	}
+	return own.set[ip.String()]
 }
 
 // touch returns the device for ip, creating it (and looking up its names in the background).

@@ -367,7 +367,7 @@ function renderSetup() {
     (showPacQR ? '<div class="qrrow"><img alt="QR code of the proxy address" src="/api/qr.svg?url=' + encodeURIComponent(it.pac) + '"><div class="muted">Scan it with the phone to get the address on the phone, then copy it from there into the proxy setting. A QR code can not change the proxy by itself.</div></div>' : '') +
     '</div>' +
 
-    '<div class="step"><b>2. Identify the phone</b> <span class="muted">(optional: shows its real model, like SHARK PAR-A0)</span>' +
+    '<div class="step"><b>2. Identify the phone</b> <span class="muted">(optional: shows its real model, like SHARK PAR-A0). The browser always warns on this page, because the model is only shared with HTTPS pages and the PC makes its own certificate. You do it once per phone browser; or skip this step and just rename the device.</span>' +
     '<div class="qrrow"><img alt="QR code of the identify page" src="/api/qr.svg?url=' + encodeURIComponent(it.identify) + '"><div>' +
     '<div class="muted">Scan with the phone camera, or open this address on the phone:</div>' +
     '<div class="addr"><code>' + esc(it.identify) + '</code><button class="btn small" data-copy="' + esc(it.identify) + '">Copy</button> ' + reach(it.identifyReachable) + '</div>' +

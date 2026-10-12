@@ -1,12 +1,16 @@
 package identify
 
 import (
+	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -170,4 +174,102 @@ func TestTLSListenerRejectsOldProtocols(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
+}
+
+func ipsOf(s ...string) []net.IP {
+	var out []net.IP
+	for _, x := range s {
+		out = append(out, net.ParseIP(x))
+	}
+	return out
+}
+
+func TestPersistentKeepsTheSameCertificateAcrossRestarts(t *testing.T) {
+	dir := t.TempDir()
+	ips := ipsOf("192.168.1.10")
+
+	first, err := Persistent(dir, ips)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, CertFile)); err != nil {
+		t.Fatalf("certificate not saved: %v", err)
+	}
+	second, err := Persistent(dir, ips) // "the app restarted"
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first.Certificate[0]) != string(second.Certificate[0]) {
+		t.Fatal("a restart must keep the certificate, or the browser's one-time exception stops matching")
+	}
+
+	// and it still serves TLS after being read back from disk
+	srv := httptest.NewUnstartedServer(New(func(string, stats.Identity) error { return nil }))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{second}}
+	srv.StartTLS()
+	defer srv.Close()
+	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	resp, err := c.Get(srv.URL + "/identify")
+	if err != nil {
+		t.Fatalf("saved certificate does not work: %v", err)
+	}
+	resp.Body.Close()
+}
+
+func TestPersistentIsReplacedWhenTheAddressesChange(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := Persistent(dir, ipsOf("192.168.1.10"))
+
+	// a new address (another network, a hotspot) the saved certificate does not cover
+	fresh, err := Persistent(dir, ipsOf("192.168.1.10", "192.168.137.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(old.Certificate[0]) == string(fresh.Certificate[0]) {
+		t.Fatal("a certificate that does not cover the new address must be replaced")
+	}
+	leaf, _ := x509.ParseCertificate(fresh.Certificate[0])
+	for _, ip := range []string{"192.168.1.10", "192.168.137.1"} {
+		if err := leaf.VerifyHostname(ip); err != nil {
+			t.Errorf("new certificate not valid for %s: %v", ip, err)
+		}
+	}
+}
+
+func TestPersistentRenewsAnExpiringOrBrokenFile(t *testing.T) {
+	ips := ipsOf("192.168.1.10")
+
+	// about to expire (10 days left, renewal threshold is 30)
+	dir := t.TempDir()
+	soon, _ := selfSigned(ips, time.Now().Add(10*24*time.Hour))
+	writeCert(t, dir, soon)
+	renewed, err := Persistent(dir, ips)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, _ := x509.ParseCertificate(renewed.Certificate[0])
+	if time.Until(leaf.NotAfter) < 300*24*time.Hour {
+		t.Fatalf("an almost expired certificate was kept (valid for %s)", time.Until(leaf.NotAfter))
+	}
+
+	// a corrupted file must not stop the identify page from working
+	dir = t.TempDir()
+	os.WriteFile(filepath.Join(dir, CertFile), []byte("garbage"), 0o600)
+	if _, err := Persistent(dir, ips); err != nil {
+		t.Fatalf("a broken certificate file must be replaced, got %v", err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, CertFile)); !strings.Contains(string(data), "BEGIN CERTIFICATE") {
+		t.Fatal("the broken file was not replaced")
+	}
+}
+
+// writeCert saves cert in the same format Persistent uses.
+func writeCert(t *testing.T, dir string, cert tls.Certificate) {
+	t.Helper()
+	key, _ := x509.MarshalECPrivateKey(cert.PrivateKey.(*ecdsa.PrivateKey))
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
+	data = append(data, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: key})...)
+	if err := os.WriteFile(filepath.Join(dir, CertFile), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
