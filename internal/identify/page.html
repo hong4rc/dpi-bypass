@@ -39,7 +39,7 @@ button:active{filter:brightness(.92)}
   <div class="proxy" id="proxy" hidden>
     <div class="pstatus" id="pstatus"></div>
     <div id="pacbox" hidden>
-      <div class="muted">Proxy address. Paste it into this phone's Wi-Fi settings:</div>
+      <div class="muted">Proxy address. Paste it into this device's Wi-Fi settings:</div>
       <input id="pacaddr" type="text" readonly>
       <button id="copyPac" type="button">Copy proxy address</button>
       <div class="muted steps" id="copied"></div>
@@ -61,7 +61,7 @@ button:active{filter:brightness(.92)}
   // phone that uses the proxy can get that request to the PC, and the PC then tells us it saw it.
   async function proxyCheck() {
     $('proxy').hidden = false;
-    $('pstatus').textContent = 'Checking whether this phone uses the proxy...';
+    $('pstatus').textContent = 'Checking whether this device uses the proxy...';
     let s = null;
     try {
       try { await fetch('https://{{PROBE_HOST}}/', { mode: 'no-cors', cache: 'no-store' }); } catch (e) { /* expected: the name does not exist */ }
@@ -71,11 +71,11 @@ button:active{filter:brightness(.92)}
     } catch (e) { /* could not check: the address is offered anyway */ }
 
     if (s && s.checked && s.usingProxy) {
-      $('pstatus').textContent = '✓ This phone is using the proxy.';
+      $('pstatus').textContent = '✓ This device is using the proxy.';
       $('pstatus').className = 'pstatus ok';
       return;
     }
-    $('pstatus').textContent = s && s.checked ? 'This phone does not seem to use the proxy yet.' : 'Could not check whether this phone uses the proxy.';
+    $('pstatus').textContent = s && s.checked ? 'This device does not seem to use the proxy yet.' : 'Could not check whether this device uses the proxy.';
     $('pstatus').className = 'pstatus warn';
     if (s && s.pac) { $('pacbox').hidden = false; $('pacaddr').value = s.pac; }
   }
