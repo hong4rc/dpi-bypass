@@ -148,9 +148,20 @@ li{margin:3px 0}
 .l-bad{color:var(--red)}.l-warn{color:var(--yellow)}.l-debug{color:var(--muted)}
 #siteInput{flex:1;min-width:240px;max-width:420px}
 h3{margin:24px 0 8px;font-size:13px;color:var(--dim)}
-.mode{display:flex;gap:12px;align-items:flex-start;padding:10px 12px;border-radius:10px;background:var(--s2);margin:8px 0;cursor:pointer}
-.mode:has(input:checked){background:var(--accent-bg)}
-.mode input{margin-top:5px;accent-color:var(--accent)}
+.hero{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.card.span2{grid-column:span 2}
+@media (max-width:760px){.card.span2{grid-column:auto}}
+.modelabel{margin:20px 0 8px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.seg{display:inline-flex;background:var(--s2);border-radius:12px;padding:4px;gap:4px}
+.seg label{cursor:pointer;position:relative}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg span{display:block;padding:9px 30px;border-radius:9px;font-weight:700;font-size:14px;color:var(--dim);transition:background .12s,color .12s}
+.seg label:hover span{color:var(--text)}
+.seg input:checked+span{background:var(--accent);color:var(--on-accent)}
+.seg input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.modehelp{margin:10px 0 0;min-height:3.2em;color:var(--dim)}
+.modepill{background:var(--accent-bg);color:var(--accent);border:0;border-radius:8px;padding:2px 11px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.04em}
+.modepill:hover{filter:brightness(1.15)}
 #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--s3);color:var(--text);padding:10px 18px;border-radius:12px;opacity:0;pointer-events:none;transition:all .2s;max-width:90vw;z-index:10;box-shadow:0 6px 24px rgba(0,0,0,.35)}
 #toast.show{opacity:1;transform:translateX(-50%)}
 footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
@@ -162,6 +173,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
     <div class="top">
       <div class="brand">dpi-bypass<span class="ver" id="ver"></span></div>
       <div class="state"><span class="dot"></span><span id="pill">off</span></div>
+      <button class="modepill" id="modePill" title="DPI mode. Change it on the Overview tab"></button>
       <div class="spacer"></div>
       <span class="muted" id="topLabel">bypass</span>
       <label class="switch" title="Turn the bypass on or off for this PC"><input type="checkbox" id="topToggle"><span></span></label>
@@ -179,26 +191,23 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
 <main class="wrap">
 
 <section id="s-overview" class="active">
-  <div class="stats" id="stats"></div>
-
-  <div class="grid">
-    <div class="card">
-      <div class="row"><h2>This PC</h2><span class="badge" id="bypassBadge">off</span></div>
+  <div class="grid hero">
+    <div class="card span2">
+      <div class="row"><h2>Bypass</h2><span class="badge" id="bypassBadge">off</span></div>
       <p id="bypassText">Turn the bypass on and blocked HTTPS sites (like Steam) open normally on this PC.</p>
+
+      <div class="modelabel">DPI mode</div>
+      <div class="seg" id="modes" role="radiogroup" aria-label="DPI mode">
+        <label><input type="radio" name="mode" value="always"><span>Always</span></label>
+        <label><input type="radio" name="mode" value="learn"><span>Learn</span></label>
+      </div>
+      <p class="modehelp" id="modeHelp"></p>
+
       <div class="testrow">
         <button class="btn" id="testBtn">Test Steam connection</button>
         <span class="muted" id="testHint">opens store.steampowered.com through the bypass</span>
       </div>
       <div class="result" id="testResult"></div>
-    </div>
-
-    <div class="card">
-      <h2>DPI mode</h2>
-      <p>How sites that nothing is known about are handled. What the app has learned about sites is kept in both modes.</p>
-      <div id="modes">
-        <label class="mode"><input type="radio" name="mode" value="always"><span><b>Always</b><br><span class="muted">Bypass by default. A site only connects directly once it is known to work better that way.</span></span></label>
-        <label class="mode"><input type="radio" name="mode" value="learn"><span><b>Learn</b><br><span class="muted">Connect normally first. A site only gets the bypass after normal connections failed and the bypass fixed them, twice.</span></span></label>
-      </div>
     </div>
 
     <div class="card">
@@ -215,14 +224,9 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
         </ol>
       </div>
     </div>
-
-    <div class="card">
-      <h2>About</h2>
-      <p>Dashboard: <span id="dashUrl" style="color:var(--accent)"></span></p>
-      <p>Only this PC can open the dashboard. Other devices can only fetch the proxy address.</p>
-      <p class="muted">Start with Windows, Quit and Clear log are in the tray icon menu.</p>
-    </div>
   </div>
+
+  <div class="stats" id="stats" style="margin-top:14px"></div>
 </section>
 
 <section id="s-devices">
@@ -277,7 +281,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
 </section>
 
 </main>
-<footer>only this PC can open this page &middot; <span id="up"></span></footer>
+<footer>only this PC can open this page &middot; Start with Windows, Clear log and Quit are in the tray icon menu &middot; <span id="up"></span></footer>
 <div id="toast"></div>
 
 <script>
@@ -310,10 +314,15 @@ function showTab(name) {
   history.replaceState(null, '', '#' + name);
   refreshTab();
 }
+$('modePill').addEventListener('click', () => showTab('overview'));
 $('tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) showTab(b.dataset.tab); });
 
 /* ---------- overview ---------- */
 let state = null;
+const modeHelp = {
+  always: 'Every site you have not set or taught the app about goes through the bypass first. A site only connects directly once it is known to work better that way.',
+  learn: 'A site connects normally first. Only after normal connections failed and the bypass fixed them, twice, does it get the bypass.',
+};
 async function refreshState() {
   try { render(await api('/api/state')); } catch (e) { $('pill').textContent = 'offline'; }
 }
@@ -323,6 +332,8 @@ function render(s) {
   if (lanKey !== lastLanKey) { lastLanKey = lanKey; setupData = null; if (tab === 'devices') loadSetup(); }
   document.title = 'DPI bypass - ' + (s.on ? 'on' : 'off');
   $('hdr').classList.toggle('on', s.on);
+  $('modePill').textContent = s.mode;
+  $('modeHelp').textContent = modeHelp[s.mode] || '';
   document.querySelectorAll('input[name=mode]').forEach(r => { r.checked = r.value === s.mode; });
   $('pill').textContent = s.on ? 'on' : 'off';
   $('ver').textContent = s.version;
@@ -336,7 +347,6 @@ function render(s) {
   $('lanToggle').checked = s.lan.enabled;
   $('lanOn').hidden = !s.lan.enabled;
   $('lanUrls').innerHTML = s.lan.urls.map(u => '<div class="url"><code>' + esc(u) + '</code><button class="btn ghost small" data-copy="' + esc(u) + '">Copy</button></div>').join('');
-  $('dashUrl').textContent = location.origin + '/';
   $('nDevices').textContent = s.deviceCount;
   $('nSites').textContent = s.siteCount;
   $('up').textContent = 'running ' + dur(s.uptimeSec);
