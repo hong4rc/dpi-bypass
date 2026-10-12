@@ -140,7 +140,12 @@ func (l *List) Add(host, note string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	_, err = fmt.Fprintf(f, "\n%s # %s\n", host, note)
+	// start on a fresh line only when the file does not already end with one
+	lead := ""
+	if data, rerr := os.ReadFile(l.path); rerr == nil && len(data) > 0 && data[len(data)-1] != '\n' {
+		lead = "\n"
+	}
+	_, err = fmt.Fprintf(f, "%s%s # %s\n", lead, host, note)
 	f.Close()
 	if err != nil {
 		return false, err

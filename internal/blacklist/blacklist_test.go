@@ -126,6 +126,25 @@ func TestDeletingTheFileEmptiesTheListAndAddRecreatesIt(t *testing.T) {
 	}
 }
 
+// Entries go on consecutive lines: no blank line between them, but a file whose
+// last line has no newline (hand-edited) still gets the entry on its own line.
+func TestAddKeepsEntriesOnConsecutiveLines(t *testing.T) {
+	l, path := newWith(t, "a.example", "b.example")
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "\n\n") {
+		t.Fatalf("blank line between entries:\n%q", data)
+	}
+	os.WriteFile(path, []byte("# header\nc.example"), 0o644) // no trailing newline
+	l.Reload()
+	if _, err := l.Add("d.example", "test"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(path)
+	if string(data) != "# header\nc.example\nd.example # test\n" {
+		t.Fatalf("got %q", data)
+	}
+}
+
 func TestEntriesCarryNotesAndRemoveKeepsTheRest(t *testing.T) {
 	l, path := newWith(t, "keep.example")
 	if _, err := l.Add("a.example.org", "added in dashboard"); err != nil {
