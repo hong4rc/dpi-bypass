@@ -32,6 +32,8 @@ func main() {
 	restore := flag.Bool("restore", false, "restore the system proxy setting and exit")
 	guard := flag.Int("guard", 0, "internal: restore the proxy setting when this process id exits")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	lan := flag.Bool("lan", false, "share the bypass with other devices on your LAN (remembered)")
+	noLAN := flag.Bool("no-lan", false, "stop sharing with other devices (remembered)")
 	flag.Parse()
 
 	switch {
@@ -60,6 +62,13 @@ func main() {
 
 	a := app.New(dir, addr, version)
 	a.Start(ln)
+	if *noLAN {
+		a.DisableLAN()
+	} else if *lan || a.LANWanted() {
+		if err := a.EnableLAN(); err != nil {
+			logx.Info.Printf("LAN sharing not started: %v", err)
+		}
+	}
 	defer a.Disable() // also restores on a panic in this goroutine
 	sysproxy.StartGuard()
 

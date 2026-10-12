@@ -24,6 +24,20 @@ Or build: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
 
 macOS/Linux: run the binary in a terminal and stop it with Ctrl+C. On Linux without GNOME, set your system proxy auto-config (PAC) URL to `http://127.0.0.1:18080/proxy.pac` yourself.
 
+## Use on iPhone, Android and other devices
+
+Your PC can share the bypass with every device on the same Wi-Fi/router.
+
+1. Tray menu: tick **Allow other devices**. The address `http://<PC-IP>:18080/proxy.pac` is copied for you (also in the menu, and in `dpi-info.log`). Without a tray: run with `-lan` (remembered; `-no-lan` turns it off).
+2. Windows asks about the firewall the first time: allow **Private networks**. If you missed it, run once as admin: `netsh advfirewall firewall add rule name="dpi-bypass" dir=in action=allow protocol=TCP localport=18080 profile=private`
+3. On the device, set the Wi-Fi proxy to **Automatic** and paste the address:
+   - iPhone: Settings > Wi-Fi > (i) > Configure Proxy > Automatic
+   - Android: Wi-Fi > network > Advanced > Proxy > Proxy Auto-Config
+   - Mac / other PC: Network > Proxy > Automatic proxy configuration
+4. Reserve a fixed IP for the PC in your router (DrayTek: LAN > Bind IP to MAC), or the address changes.
+
+Safety: only private LAN addresses can connect, and a device on the LAN cannot use the proxy to reach services running on your PC itself. The PC must stay on and awake; if it is off, devices that never loaded the PAC just connect normally, and ones that cached it may wait a few seconds before going direct. Router-wide setup: DHCP option 252 (WPAD) with the same address, if your router allows it.
+
 ## It will not lock you out
 
 - Quitting, Ctrl+C or a normal close restores your previous proxy setting.

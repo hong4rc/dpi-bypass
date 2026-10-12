@@ -28,6 +28,7 @@ type App struct {
 
 	mu   sync.Mutex
 	on   bool
+	lan  []net.Listener // extra listeners while sharing with other devices
 	quit chan struct{}
 	once sync.Once
 }

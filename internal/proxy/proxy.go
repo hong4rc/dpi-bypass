@@ -46,7 +46,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // servePAC: only https:// to public hosts goes to this proxy; plain http, LAN
 // addresses, local names and the blacklist go DIRECT.
 func (p *Proxy) servePAC(w http.ResponseWriter, r *http.Request) {
-	logx.Debug.Printf("PAC requested by %s", r.RemoteAddr)
+	logx.Debug.Printf("PAC requested by %s (Host %s)", r.RemoteAddr, r.Host)
+	proxyAddr := p.addr
+	if h, _, err := net.SplitHostPort(r.Host); err == nil && net.ParseIP(h) != nil {
+		proxyAddr = r.Host // a LAN device must be told our LAN address, not 127.0.0.1
+	}
 	var quoted []string
 	for _, d := range p.bl.Items() {
 		quoted = append(quoted, fmt.Sprintf("%q", d))
@@ -58,7 +62,7 @@ function FindProxyForURL(u,h){
   if(/^\d+\.\d+\.\d+\.\d+$/.test(h)&&(isInNet(h,"10.0.0.0","255.0.0.0")||isInNet(h,"172.16.0.0","255.240.0.0")||isInNet(h,"192.168.0.0","255.255.0.0")||isInNet(h,"127.0.0.0","255.0.0.0")||isInNet(h,"169.254.0.0","255.255.0.0")))return "DIRECT";
   for(var i=0;i<skip.length;i++)if(h==skip[i]||dnsDomainIs(h,"."+skip[i]))return "DIRECT";
   return "PROXY %s; DIRECT";
-}`, strings.Join(quoted, ","), p.addr)
+}`, strings.Join(quoted, ","), proxyAddr)
 }
 
 func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +77,12 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logx.Info.Printf("FAIL dial %s: %v", r.Host, err)
 		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !clientIsLocal(r.RemoteAddr) && isSelf(up.RemoteAddr()) {
+		up.Close()
+		logx.Info.Printf("BLOCKED %s: LAN client %s tried to reach this PC through the proxy", r.Host, r.RemoteAddr)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	cl, _, err := w.(http.Hijacker).Hijack()

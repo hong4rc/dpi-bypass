@@ -229,3 +229,35 @@ func TestPrivateAddressesAreNotSplit(t *testing.T) {
 		t.Fatalf("got %q, fragmented hellos seen: %d (want OK, 0)", buf, fragmentedSeen.Load())
 	}
 }
+
+func TestPACAdvertisesTheAddressTheClientUsed(t *testing.T) {
+	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
+	p := New("127.0.0.1:18080", bl)
+	for host, want := range map[string]string{
+		"192.168.1.50:18080": "PROXY 192.168.1.50:18080",
+		"127.0.0.1:18080":    "PROXY 127.0.0.1:18080",
+		"evil.example:18080": "PROXY 127.0.0.1:18080", // a name in Host is not trusted
+	} {
+		req := httptest.NewRequest("GET", "/proxy.pac", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		p.ServeHTTP(rec, req)
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("Host %q: PAC lacks %q:\n%s", host, want, rec.Body.String())
+		}
+	}
+}
+
+func TestClientIsLocalAndIsSelf(t *testing.T) {
+	for remote, want := range map[string]bool{"127.0.0.1:5000": true, "[::1]:5000": true, "192.168.1.9:5000": false, "bad": false} {
+		if got := clientIsLocal(remote); got != want {
+			t.Errorf("clientIsLocal(%q)=%v want %v", remote, got, want)
+		}
+	}
+	if !isSelf(&net.TCPAddr{IP: net.ParseIP("127.0.0.1")}) {
+		t.Error("loopback must count as this PC")
+	}
+	if isSelf(&net.TCPAddr{IP: net.ParseIP("8.8.8.8")}) {
+		t.Error("8.8.8.8 is not this PC")
+	}
+}

@@ -5,6 +5,10 @@ package tray
 import (
 	"image/color"
 	"os/exec"
+	"strings"
+	"syscall"
+
+	"golang.org/x/sys/windows"
 
 	"fyne.io/systray"
 
@@ -30,6 +34,9 @@ func build(a *app.App) {
 	mToggle := systray.AddMenuItem("", "")
 	mTest := systray.AddMenuItem("Test Steam connection", "Open Steam through the bypass and report")
 	systray.AddSeparator()
+	mLAN := systray.AddMenuItemCheckbox("Allow other devices (iPhone, Android...)", "Share the bypass on your Wi-Fi", a.LANEnabled())
+	mURL := systray.AddMenuItem("", "Click to copy this address")
+	systray.AddSeparator()
 	mLog := systray.AddMenuItem("Open log", "")
 	mSkip := systray.AddMenuItem("Edit skip list (blacklist)", "Domains that connect directly")
 	mAuto := systray.AddMenuItemCheckbox("Start with Windows", "", autostartEnabled())
@@ -49,6 +56,18 @@ func build(a *app.App) {
 	}
 	render()
 
+	renderLAN := func() {
+		if urls := a.LANURLs(); len(urls) > 0 {
+			mLAN.Check()
+			mURL.SetTitle("Copy phone address: " + urls[0])
+			mURL.Show()
+		} else {
+			mLAN.Uncheck()
+			mURL.Hide()
+		}
+	}
+	renderLAN()
+
 	go func() {
 		for {
 			select {
@@ -61,6 +80,25 @@ func build(a *app.App) {
 				render()
 			case <-mTest.ClickedCh:
 				go func() { notify.Send("DPI bypass test", a.Test()) }()
+			case <-mLAN.ClickedCh:
+				if a.LANEnabled() {
+					a.DisableLAN()
+					renderLAN()
+					break
+				}
+				if err := a.EnableLAN(); err != nil {
+					go notify.Send("Cannot share with other devices", err.Error())
+					break
+				}
+				renderLAN()
+				url := a.LANURLs()[0]
+				copyText(url)
+				go notify.Send("Sharing is ON (address copied)", "On the phone: Wi-Fi > (i) > Configure Proxy > Automatic > paste "+url)
+			case <-mURL.ClickedCh:
+				if urls := a.LANURLs(); len(urls) > 0 {
+					copyText(urls[0])
+					go notify.Send("Copied", urls[0])
+				}
 			case <-mLog.ClickedCh:
 				exec.Command("notepad", a.LogPath()).Start()
 			case <-mSkip.ClickedCh:
@@ -81,4 +119,12 @@ func build(a *app.App) {
 			}
 		}
 	}()
+}
+
+// copyText puts s on the clipboard using clip.exe (hidden, no console flash).
+func copyText(s string) {
+	cmd := exec.Command("clip")
+	cmd.Stdin = strings.NewReader(s)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	cmd.Run()
 }
