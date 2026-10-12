@@ -70,7 +70,7 @@ func TestPACSendsBlacklistDirect(t *testing.T) {
 	rec := httptest.NewRecorder()
 	New("127.0.0.1:18080", bl).ServeHTTP(rec, httptest.NewRequest("GET", "/proxy.pac", nil))
 	body := rec.Body.String()
-	for _, want := range []string{`"riotgames.com"`, "PROXY 127.0.0.1:18080", `return "DIRECT"`} {
+	for _, want := range []string{`"riotgames.com"`, "PROXY 127.0.0.1:18080", `return "DIRECT"`, "isPlainHostName", `isInNet(h,"192.168.0.0"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("PAC missing %q:\n%s", want, body)
 		}
@@ -83,6 +83,7 @@ func proxyServer(t *testing.T, tlsPort string) (*Proxy, *blacklist.List, string)
 	bl := blacklist.New(filepath.Join(t.TempDir(), "bl.txt"))
 	p := New("127.0.0.1:0", bl)
 	p.TLSPorts[tlsPort] = true
+	p.SplitPrivate = true // the fake servers live on loopback
 	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)
 	return p, bl, strings.TrimPrefix(srv.URL, "http://")
@@ -110,6 +111,17 @@ func connectThroughProxy(t *testing.T, proxyAddr, target string) net.Conn {
 // A server that resets fragmented hellos must still work: the proxy retries
 // unsplit and remembers the host.
 func TestAutoSkipWhenSplitBreaksServer(t *testing.T) {
+	testAutoSkip(t, nil)
+}
+
+// Embedded servers (routers) often answer a fragmented hello with a TLS alert
+// instead of closing: that must trigger the same retry.
+func TestAutoSkipWhenSplitGetsTLSAlert(t *testing.T) {
+	testAutoSkip(t, []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28})
+}
+
+// fragReply is what the fake server sends for a fragmented hello (nil = just close).
+func testAutoSkip(t *testing.T, fragReply []byte) {
 	var fragmentedSeen, plainSeen atomic.Int32
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	t.Cleanup(func() { ln.Close() })
@@ -129,7 +141,8 @@ func TestAutoSkipWhenSplitBreaksServer(t *testing.T) {
 				io.ReadFull(c, body)
 				if fragmented(append(h, body...)) {
 					fragmentedSeen.Add(1)
-					return // close without a reply, like a server that rejects fragments
+					c.Write(fragReply) // nil: close without a reply, like a server that rejects fragments
+					return
 				}
 				plainSeen.Add(1)
 				c.Write([]byte("OK"))
@@ -179,5 +192,40 @@ func TestSplitHelloCompletesRealTLSHandshake(t *testing.T) {
 	defer resp.Body.Close()
 	if b, _ := io.ReadAll(resp.Body); string(b) != "hi" {
 		t.Fatalf("body %q", b)
+	}
+}
+
+// LAN servers (e.g. the router's admin page) are never split by default.
+func TestPrivateAddressesAreNotSplit(t *testing.T) {
+	var fragmentedSeen atomic.Int32
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		h := make([]byte, 5)
+		io.ReadFull(c, h)
+		body := make([]byte, int(h[3])<<8|int(h[4]))
+		io.ReadFull(c, body)
+		if fragmented(append(h, body...)) {
+			fragmentedSeen.Add(1)
+		}
+		c.Write([]byte("OK"))
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	p := New("127.0.0.1:0", blacklist.New(filepath.Join(t.TempDir(), "bl.txt")))
+	p.TLSPorts[port] = true // SplitPrivate stays at its default (off)
+	srv := httptest.NewServer(p)
+	t.Cleanup(srv.Close)
+
+	c := connectThroughProxy(t, strings.TrimPrefix(srv.URL, "http://"), ln.Addr().String())
+	c.Write(fakeHello(200))
+	buf := make([]byte, 2)
+	io.ReadFull(c, buf)
+	if string(buf) != "OK" || fragmentedSeen.Load() != 0 {
+		t.Fatalf("got %q, fragmented hellos seen: %d (want OK, 0)", buf, fragmentedSeen.Load())
 	}
 }

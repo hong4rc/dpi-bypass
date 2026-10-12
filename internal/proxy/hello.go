@@ -8,6 +8,15 @@ import (
 
 const splitAt = 40 // inside the ClientHello, before the SNI extension
 
+// isAlert reports whether b starts with a TLS alert record.
+func isAlert(b []byte) bool { return len(b) > 0 && b[0] == 0x15 }
+
+// isPrivate reports whether host is a loopback, LAN or link-local IP literal.
+func isPrivate(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast())
+}
+
 // readFirst waits briefly for the server's first bytes; nil means no reply.
 func readFirst(c net.Conn) []byte {
 	buf := make([]byte, 32<<10)

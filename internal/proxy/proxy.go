@@ -25,6 +25,10 @@ type Proxy struct {
 	bl       *blacklist.List
 	TLSPorts map[string]bool   // ports whose first bytes are a TLS ClientHello
 	OnSkip   func(host string) // called when a host was auto-added to the blacklist
+
+	// SplitPrivate also fragments hellos sent to LAN/loopback IPs. Off by default:
+	// routers and other embedded servers often can't reassemble fragments.
+	SplitPrivate bool
 }
 
 func New(addr string, bl *blacklist.List) *Proxy {
@@ -39,7 +43,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.servePAC(w, r)
 }
 
-// servePAC: https:// goes to this proxy; everything else and the blacklist go DIRECT.
+// servePAC: only https:// to public hosts goes to this proxy; plain http, LAN
+// addresses, local names and the blacklist go DIRECT.
 func (p *Proxy) servePAC(w http.ResponseWriter, r *http.Request) {
 	logx.Debug.Printf("PAC requested by %s", r.RemoteAddr)
 	var quoted []string
@@ -49,6 +54,8 @@ func (p *Proxy) servePAC(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `var skip=[%s];
 function FindProxyForURL(u,h){
   if(u.indexOf("https:")!=0)return "DIRECT";
+  if(isPlainHostName(h)||dnsDomainIs(h,".local"))return "DIRECT";
+  if(/^\d+\.\d+\.\d+\.\d+$/.test(h)&&(isInNet(h,"10.0.0.0","255.0.0.0")||isInNet(h,"172.16.0.0","255.240.0.0")||isInNet(h,"192.168.0.0","255.255.0.0")||isInNet(h,"127.0.0.0","255.0.0.0")||isInNet(h,"169.254.0.0","255.255.0.0")))return "DIRECT";
   for(var i=0;i<skip.length;i++)if(h==skip[i]||dnsDomainIs(h,"."+skip[i]))return "DIRECT";
   return "PROXY %s; DIRECT";
 }`, strings.Join(quoted, ","), p.addr)
@@ -109,7 +116,7 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 		up.Close()
 		return nil, nil, err
 	}
-	if hello[0] != 0x16 || p.bl.Match(host) { // not TLS, or told to skip: forward untouched
+	if hello[0] != 0x16 || p.bl.Match(host) || (!p.SplitPrivate && isPrivate(host)) { // not TLS, or told to skip: forward untouched
 		if _, err := up.Write(hello); err != nil {
 			up.Close()
 			return nil, nil, err
@@ -120,12 +127,14 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 		up.Close()
 		return nil, nil, err
 	}
-	if reply := readFirst(up); reply != nil {
+	reply := readFirst(up)
+	if reply != nil && !isAlert(reply) {
 		return up, reply, nil
 	}
 	up.Close()
 
-	logx.Debug.Printf("no reply to split hello from %s, retrying unsplit", target)
+	// No reply, or a TLS alert: the server may not reassemble fragmented hellos.
+	logx.Debug.Printf("split hello to %s got no usable reply (alert=%v), retrying unsplit", target, reply != nil)
 	up2, err := net.DialTimeout("tcp", target, dialTimeout)
 	if err != nil {
 		return nil, nil, err
@@ -134,10 +143,13 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 		up2.Close()
 		return nil, nil, err
 	}
-	reply := readFirst(up2)
+	reply = readFirst(up2)
 	if reply == nil {
 		up2.Close()
 		return nil, nil, fmt.Errorf("NO REPLY with or without split (blocked or down)")
+	}
+	if isAlert(reply) { // rejects us either way (e.g. unsupported TLS version): not the split's fault
+		return up2, reply, nil
 	}
 	if err := p.bl.Add(host); err != nil {
 		logx.Info.Printf("cannot save %s to blacklist: %v", host, err)
