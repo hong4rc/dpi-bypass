@@ -7,10 +7,11 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const (
-	runPath  = `Software\Microsoft\Windows\CurrentVersion\Run`
-	runValue = "dpi-bypass"
-)
+const runValue = "dpi-bypass"
+
+// runPath is the registry key Windows reads at login. It is a variable only so the
+// tests can point it at a scratch key and never touch the user's real startup entry.
+var runPath = `Software\Microsoft\Windows\CurrentVersion\Run`
 
 // Supported reports whether this platform can start the app at login.
 func Supported() bool { return true }
