@@ -435,19 +435,30 @@ async function loadDevices() {
   if (!list.length) {
     $('devicesBody').innerHTML = '<div class="empty">No devices yet. This PC shows up after its first connection. For a phone, turn on <b>Share with other devices</b> on the Overview tab and enter the address on the phone.</div>'; return;
   }
-  $('devicesBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Device</th><th>Address</th><th>MAC</th><th>Last seen</th><th>Connections</th><th>Traffic</th></tr></thead><tbody>' +
+  $('devicesBody').innerHTML = '<div class="tablewrap"><table><thead><tr><th>Device</th><th>Address</th><th>Last seen</th><th>Connections</th><th>Traffic</th></tr></thead><tbody>' +
     list.map(d => {
-      // name you gave it > hostname > what it says it is (User-Agent) > unknown
+      // name you gave it > what it told us on the identify page > hostname > what it says it is (User-Agent) > unknown
       const agents = d.agents || [];
-      const ids = (d.identities || []).map(i => i.label).filter(Boolean);   // what the phone told us on the identify page
+      const ids = (d.identities || []).map(i => i.label).filter(Boolean);
       const title = d.name || (d.self ? 'This PC' : (ids[ids.length - 1] || d.hostname || agents[0] || 'Unknown device'));
-      const extra = [...ids, d.hostname, ...agents].filter(x => x && x !== title);
-      const sub = extra.length ? '<div class="muted" style="font-size:12px">' + esc(extra.join(' · ')) + '</div>' : '';
-      return '<tr><td><span class="live ' + (d.active ? 'active' : '') + '" title="' + (d.active ? 'active now' : 'idle') + '"></span>' +
-        '<a href="#" data-rename="' + esc(d.ip) + '" data-name="' + esc(d.name) + '" title="' + esc(['Click to rename', ...(d.rawAgents || []).map(a => 'User-Agent: ' + a)].join('\n')) + '">' + esc(title) + '</a>' + sub + '</td>' +
-        '<td>' + esc(d.ip) + '</td><td class="muted">' + esc(d.mac || '-') + '</td>' +
-        '<td>' + esc(ago(d.last)) + '</td><td>' + d.conns + (d.pacFetches ? ' <span class="muted">(+' + d.pacFetches + ' setup fetches)</span>' : '') + '</td>' +
-        '<td>' + esc(fmtBytes(d.down)) + ' <span class="muted">down</span> / ' + esc(fmtBytes(d.up)) + ' <span class="muted">up</span></td></tr>';
+      // everything else is one hover away, so the row stays short
+      const detail = [
+        title,
+        ids.length ? 'Identified as: ' + ids.join(', ') : null,
+        d.hostname ? 'Host name: ' + d.hostname : null,
+        agents.length ? 'Looks like: ' + agents.join(', ') : null,
+        'Address: ' + d.ip,
+        d.mac ? 'MAC: ' + d.mac : null,
+        'Connections: ' + d.conns + (d.pacFetches ? ' (and ' + d.pacFetches + ' times the proxy setup file was fetched)' : ''),
+        'Downloaded: ' + fmtBytes(d.down) + ', uploaded: ' + fmtBytes(d.up),
+        d.last ? 'Last seen: ' + new Date(d.last).toLocaleString() : null,
+        ...(d.rawAgents || []).map(a => 'User-Agent: ' + a),
+      ].filter(Boolean).join('\n');
+      return '<tr title="' + esc(detail) + '"><td><span class="live ' + (d.active ? 'active' : '') + '" title="' + (d.active ? 'active now' : 'idle') + '"></span>' +
+        '<a href="#" data-rename="' + esc(d.ip) + '" data-name="' + esc(d.name) + '" title="' + esc(detail + '\n\nClick to rename') + '">' + esc(title) + '</a></td>' +
+        '<td>' + esc(d.ip) + '</td>' +
+        '<td>' + esc(ago(d.last)) + '</td><td>' + d.conns + '</td>' +
+        '<td>↓ ' + esc(fmtBytes(d.down)) + ' &nbsp;↑ ' + esc(fmtBytes(d.up)) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
 }
 document.addEventListener('click', guarded(async e => {
