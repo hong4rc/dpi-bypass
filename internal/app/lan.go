@@ -279,7 +279,9 @@ func (a *App) IdentifyURLs() []string {
 }
 
 // proxyCheckWindow is how recent a phone's probe must be to count as "using the proxy".
-const proxyCheckWindow = 15 * time.Second
+// The page sends a fresh probe just before it asks, so this only has to cover a slow
+// Wi-Fi round trip; a longer window would keep saying "yes" after the proxy was removed.
+const proxyCheckWindow = 5 * time.Second
 
 // proxyStatus answers the identify page's question "is this phone using the proxy?",
 // and gives it the setup address for the PC address it reached us on.

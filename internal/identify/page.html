@@ -24,6 +24,7 @@ h1:before{content:"> ";color:var(--muted)}
 #pacaddr{width:100%;margin:8px 0;padding:10px 12px;border:0;border-radius:10px;background:var(--field);color:var(--text);font:inherit;font-size:13px}
 button{width:100%;padding:12px;border:0;border-radius:12px;background:var(--accent);color:var(--on-accent);font:inherit;font-weight:700;font-size:15px;cursor:pointer}
 button:active{filter:brightness(.92)}
+button.done{background:var(--ok)}
 .steps{margin-top:10px}
 </style>
 </head>
@@ -51,6 +52,8 @@ button:active{filter:brightness(.92)}
 (async () => {
   const $ = id => document.getElementById(id);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // a request that hangs (Wi-Fi switched mid-check) must end, or no later check could ever start
+  const limited = (url, opt, ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(), ms); return fetch(url, { ...opt, signal: c.signal }).finally(() => clearTimeout(t)); };
   const show = (icon, cls, msg, label, hint) => {
     $('icon').textContent = icon; $('icon').className = 'big ' + cls;
     $('msg').textContent = msg; $('label').textContent = label || ''; $('hint').textContent = hint || '';
@@ -59,32 +62,65 @@ button:active{filter:brightness(.92)}
   // Is this phone sending its HTTPS traffic through the proxy? The page you are on is a LAN address,
   // which the proxy setup sends direct, so it proves nothing. Instead ask for a made-up name: only a
   // phone that uses the proxy can get that request to the PC, and the PC then tells us it saw it.
+  let checking = false, checkAgain = false, proxyWatching = false, pollTimer;
   async function proxyCheck() {
+    if (checking) { checkAgain = true; return; } // a change happened mid-check: look once more when it ends
+    checking = true;
     $('proxy').hidden = false;
     $('pstatus').textContent = 'Checking whether this device uses the proxy...';
+    $('pstatus').className = 'pstatus';
     let s = null;
     try {
-      try { await fetch('https://{{PROBE_HOST}}/', { mode: 'no-cors', cache: 'no-store' }); } catch (e) { /* expected: the name does not exist */ }
+      try { await limited('https://{{PROBE_HOST}}/', { mode: 'no-cors', cache: 'no-store' }, 4000); } catch (e) { /* expected: the name does not exist */ }
       await sleep(300);
-      const r = await fetch('/identify/status', { cache: 'no-store' });
+      const r = await limited('/identify/status', { cache: 'no-store' }, 4000);
       if (r.ok) s = await r.json();
     } catch (e) { /* could not check: the address is offered anyway */ }
+    finally { checking = false; }
 
-    if (s && s.checked && s.usingProxy) {
+    const using = s && s.checked && s.usingProxy;
+    if (using) {
       $('pstatus').textContent = '✓ This device is using the proxy.';
       $('pstatus').className = 'pstatus ok';
-      return;
+      $('pacbox').hidden = true;
+    } else {
+      $('pstatus').textContent = s && s.checked ? 'This device does not seem to use the proxy yet.' : 'Could not check whether this device uses the proxy.';
+      $('pstatus').className = 'pstatus warn';
+      if (s && s.pac) { $('pacbox').hidden = false; $('pacaddr').value = s.pac; }
     }
-    $('pstatus').textContent = s && s.checked ? 'This device does not seem to use the proxy yet.' : 'Could not check whether this device uses the proxy.';
-    $('pstatus').className = 'pstatus warn';
-    if (s && s.pac) { $('pacbox').hidden = false; $('pacaddr').value = s.pac; }
+    if (checkAgain) { checkAgain = false; return proxyCheck(); }
+    // until the proxy is in use, keep looking while the page is on screen
+    clearTimeout(pollTimer);
+    if (!using) pollTimer = setTimeout(() => { if (!document.hidden) proxyCheck(); }, 5000);
   }
 
+  // The user leaves to change the Wi-Fi proxy and comes back, or the network changes: never keep the last answer.
+  function watchProxy() {
+    if (proxyWatching) return;
+    proxyWatching = true;
+    const recheck = () => { if (!document.hidden) proxyCheck(); };
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('pageshow', recheck);
+    window.addEventListener('focus', recheck);
+    window.addEventListener('online', recheck);
+    if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener('change', recheck);
+  }
+
+  let copyTimer;
   $('copyPac').addEventListener('click', async () => {
-    const text = $('pacaddr').value;
+    const text = $('pacaddr').value, btn = $('copyPac');
+    let ok = true;
     try { await navigator.clipboard.writeText(text); }
-    catch (e) { $('pacaddr').select(); $('pacaddr').setSelectionRange(0, text.length); document.execCommand('copy'); }
-    $('copied').textContent = 'Copied. Now paste it in the Wi-Fi proxy setting.';
+    catch (e) {
+      $('pacaddr').select(); $('pacaddr').setSelectionRange(0, text.length);
+      try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+    }
+    // the button itself says it worked, then goes back so it can be pressed again
+    btn.textContent = ok ? 'Copied ✓' : 'Press and hold the address to copy';
+    btn.classList.toggle('done', ok);
+    $('copied').textContent = ok ? 'Now paste it in the Wi-Fi proxy setting.' : '';
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => { btn.textContent = 'Copy proxy address'; btn.classList.remove('done'); }, 2500);
   });
 
   try {
@@ -113,6 +149,7 @@ button:active{filter:brightness(.92)}
       show('!', 'warn', 'The browser did not give a model name.', out.label, 'You can name the device in the dashboard.');
     }
     await proxyCheck();
+    watchProxy();
     $('hint').textContent = ($('hint').textContent + ' You can close this tab when you are done.').trim();
   } catch (e) {
     show('×', 'bad', 'Could not report to the PC.', String(e && e.message || e), 'Check that you are on the same Wi-Fi as the PC.');
