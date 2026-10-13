@@ -14,7 +14,7 @@ func isAlert(b []byte) bool { return len(b) > 0 && b[0] == 0x15 }
 // isPrivate reports whether host is a loopback, LAN or link-local IP literal.
 func isPrivate(host string) bool {
 	ip := net.ParseIP(host)
-	return ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast())
+	return ip != nil && (ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified())
 }
 
 // isPrivateAddr reports whether a connection's far end is a loopback, LAN or

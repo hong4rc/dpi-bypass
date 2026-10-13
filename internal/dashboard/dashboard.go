@@ -5,6 +5,7 @@
 package dashboard
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"net"
@@ -12,26 +13,32 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dpi/internal/app"
+	"dpi/internal/blacklist"
 	"dpi/internal/logx"
 )
 
 //go:embed web/index.html
 var indexHTML []byte
 
-type handler struct{ a *app.App }
+type handler struct {
+	a      *app.App
+	diagMu sync.Mutex // one site test at a time
+}
 
 // New returns the dashboard handler for a.
 func New(a *app.App) http.Handler {
-	h := &handler{a}
+	h := &handler{a: a}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", h.index)
 	mux.HandleFunc("GET /api/state", h.state)
 	mux.HandleFunc("POST /api/bypass", h.setBypass)
 	mux.HandleFunc("POST /api/lan", h.setLAN)
 	mux.HandleFunc("POST /api/test", h.test)
+	mux.HandleFunc("POST /api/diagnose", h.diagnose)
 	mux.HandleFunc("GET /api/phone-setup", h.phoneSetup)
 	mux.HandleFunc("GET /api/qr.svg", h.qr)
 	mux.HandleFunc("GET /api/devices", h.devices)
@@ -195,8 +202,53 @@ func (h *handler) setLAN(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) test(w http.ResponseWriter, r *http.Request) {
-	ok, msg := h.a.Check()
-	writeJSON(w, map[string]any{"ok": ok, "message": msg})
+	writeJSON(w, h.a.Check())
+}
+
+// diagnoseTimeout caps one site test.
+const diagnoseTimeout = 20 * time.Second
+
+// diagnose is the "Test a site" report. Only a public host name is accepted (no
+// IP address, port, path or LAN-style name), one run at a time, and it only
+// reads: other pages cannot use it to probe anything, and it changes no list.
+func (h *handler) diagnose(w http.ResponseWriter, r *http.Request) {
+	var b struct{ Host string }
+	if !readJSON(w, r, &b) {
+		return
+	}
+	host := CleanHost(b.Host)
+	if msg := badDiagnoseHost(host); msg != "" {
+		fail(w, http.StatusBadRequest, msg)
+		return
+	}
+	if !h.diagMu.TryLock() {
+		fail(w, http.StatusConflict, "Another test is still running. Try again in a moment.")
+		return
+	}
+	defer h.diagMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), diagnoseTimeout)
+	defer cancel()
+	res := h.a.Diagnose(ctx, host)
+	logx.Info.Printf("site test %s: %s", host, res.Verdict)
+	writeJSON(w, res)
+}
+
+// badDiagnoseHost explains why host cannot be tested ("" when it can).
+func badDiagnoseHost(host string) string {
+	switch {
+	case host == "":
+		return "Type a site name, for example example.com."
+	case net.ParseIP(host) != nil:
+		return "Use the site name, not an IP address."
+	case !strings.Contains(host, ".") || !blacklist.Usable(host) || strings.ContainsAny(host, ":@"):
+		return "That does not look like a site name."
+	}
+	for _, s := range []string{".local", ".lan", ".internal", ".localdomain", ".home.arpa", ".localhost"} {
+		if strings.HasSuffix(host, s) {
+			return "Only public sites can be tested; names on your own network never use the bypass."
+		}
+	}
+	return ""
 }
 
 func (h *handler) devices(w http.ResponseWriter, r *http.Request) { writeJSON(w, h.a.Stats.Devices()) }

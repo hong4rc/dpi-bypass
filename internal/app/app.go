@@ -2,11 +2,15 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +36,9 @@ type App struct {
 	Stats    *stats.Store
 	Settings *settings.Store
 	LANAddrs func() []string // addresses to share on: the PC's private LAN addresses unless a test swaps it
+	DiagEnv  proxy.DiagEnv   // how Diagnose reaches the network; the zero value is the real network
+
+	steamURL string // only set by tests: what the connection test opens instead of Steam
 
 	mu       sync.Mutex
 	on       bool
@@ -155,23 +162,69 @@ func (a *App) watch() {
 	}
 }
 
-// Check opens Steam through the proxy and returns whether it worked, with a one-line verdict.
-func (a *App) Check() (bool, string) {
-	code, err := check(a.Addr, SteamURL)
+// CheckResult is the answer to the Steam test: a plain sentence, and the raw detail for "details".
+type CheckResult struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// Check opens Steam through the proxy. It goes through the proxy even while the
+// bypass is off for this PC, so the message says which of the two it proved.
+func (a *App) Check() CheckResult {
+	code, err := check(a.Addr, a.checkTarget())
 	if err != nil {
 		logx.Info.Printf("test FAILED: %v", err)
-		return false, "Steam is still BLOCKED or unreachable: " + err.Error()
+		return CheckResult{Message: plainError(err), Detail: err.Error()}
 	}
 	logx.Info.Printf("test OK: HTTP %d", code)
-	return true, fmt.Sprintf("Steam works (HTTP %d). The bypass is doing its job.", code)
+	msg := "Steam works through the bypass."
+	if !a.On() {
+		msg = "Steam works through the bypass, but the bypass is off for this PC. Turn it on to use it."
+	}
+	return CheckResult{OK: true, Message: msg, Detail: fmt.Sprintf("HTTP %d from %s", code, a.checkTarget())}
+}
+
+// checkTarget is what the connection test opens (a test can point it elsewhere).
+func (a *App) checkTarget() string {
+	if a.steamURL != "" {
+		return a.steamURL
+	}
+	return SteamURL
+}
+
+// plainError turns a network error into one sentence a person can act on.
+func plainError(err error) string {
+	var ne net.Error
+	msg := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &ne) && ne.Timeout(), strings.Contains(msg, "timeout"):
+		return "No reply in time: the site is blocked or very slow."
+	case strings.Contains(msg, "reset by peer"), strings.Contains(msg, "forcibly closed"), strings.Contains(msg, "aborted by the software"), errors.Is(err, io.EOF):
+		return "The connection was cut, which is what a site block looks like."
+	case strings.Contains(msg, "no such host"):
+		return "The name could not be found (DNS problem or no internet)."
+	case strings.Contains(msg, "refused"):
+		return "The proxy did not answer."
+	case strings.Contains(msg, "bad gateway"):
+		return "The proxy could not reach Steam."
+	}
+	return "Steam could not be reached."
 }
 
 // check does an HTTPS request through the proxy; any HTTP response proves the TLS handshake passed.
 func check(proxyAddr, target string) (int, error) {
 	pu := &url.URL{Scheme: "http", Host: proxyAddr}
 	c := &http.Client{
-		Timeout:       15 * time.Second,
-		Transport:     &http.Transport{Proxy: http.ProxyURL(pu)},
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{Proxy: http.ProxyURL(pu), OnProxyConnectResponse: func(_ context.Context, _ *url.URL, _ *http.Request, res *http.Response) error {
+			if res.StatusCode == http.StatusOK {
+				return nil
+			}
+			// the proxy says why in the body ("no such host", "timeout"...); the default error would only say "Bad Gateway"
+			why, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+			return fmt.Errorf("%s: %s", res.Status, strings.TrimSpace(string(why)))
+		}},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	resp, err := c.Get(target)

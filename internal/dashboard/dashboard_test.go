@@ -2,8 +2,11 @@ package dashboard
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -313,5 +316,70 @@ func TestCleanHost(t *testing.T) {
 		if got := CleanHost(in); got != want {
 			t.Errorf("CleanHost(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+func TestDiagnoseNeedsTheHeaderAndAPublicSiteName(t *testing.T) {
+	h, _ := newHandler(t)
+	body := func(host string) string { b, _ := json.Marshal(map[string]string{"host": host}); return string(b) }
+
+	if rec := do(h, req{method: "POST", path: "/api/diagnose", body: body("example.com")}); rec.Code != http.StatusForbidden {
+		t.Fatalf("without the header: %d", rec.Code)
+	}
+	for _, bad := range []string{"", "   ", "192.168.1.1", "8.8.8.8", "localhost", "router", "nas.local", "printer.lan", "a b.com", "user@example.com"} {
+		if rec := post(h, "POST", "/api/diagnose", body(bad)); rec.Code != http.StatusBadRequest {
+			t.Errorf("%q should be rejected, got %d %s", bad, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestDiagnoseReturnsTheReportAndWhatTheAppKnows(t *testing.T) {
+	h, a := newHandler(t)
+	a.DiagEnv.Lookup = func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.9")}, nil }
+	a.DiagEnv.Dial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("connection refused") }
+
+	rec := post(h, "POST", "/api/diagnose", `{"host":"https://Example.com/some/path"}`)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		Host     string
+		Attempts []struct{ Name, Result string }
+		Verdict  string
+		Listed   string
+		Mode     string
+		Plan     string
+		BypassOn bool
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Host != "example.com" || len(got.Attempts) != 2 || got.Attempts[0].Name != "direct" || got.Attempts[1].Name != "split" ||
+		got.Verdict == "" || got.Listed != "UNKNOWN" || got.Mode != "learn" || got.Plan == "" || got.BypassOn {
+		t.Fatalf("report shape: %s", rec.Body)
+	}
+	if n := a.Policy.Skip.Len() + a.Policy.Bypass.Len(); n != 0 {
+		t.Fatalf("a diagnostic must not write any list, found %d entries", n)
+	}
+}
+
+func TestDiagnoseRunsOneAtATime(t *testing.T) {
+	h, a := newHandler(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	a.DiagEnv.Lookup = func(context.Context, string) ([]net.IP, error) {
+		close(entered) // only the first run gets here: the second must be refused before resolving
+		<-release
+		return nil, errors.New("no such host")
+	}
+
+	first := make(chan int, 1)
+	go func() { first <- post(h, "POST", "/api/diagnose", `{"host":"example.com"}`).Code }()
+	<-entered
+	if rec := post(h, "POST", "/api/diagnose", `{"host":"example.org"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("second run while one is active: %d %s", rec.Code, rec.Body)
+	}
+	close(release)
+	if code := <-first; code != 200 {
+		t.Fatalf("first run: %d", code)
 	}
 }
