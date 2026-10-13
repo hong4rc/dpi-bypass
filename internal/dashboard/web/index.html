@@ -322,6 +322,13 @@ async function api(path, method = 'GET', body) {
   if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
   return data;
 }
+// copied shows "Copied" on the button that was pressed, then restores it
+function copied(btn) {
+  if (!btn) return;
+  if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+  btn.textContent = 'Copied ✓';
+  clearTimeout(btn._t); btn._t = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1800);
+}
 let toastTimer;
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3200); }
 const guarded = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message); refreshState(); } };
@@ -390,9 +397,9 @@ $('lanToggle').addEventListener('change', guarded(async e => {
   if (e.target.checked) toast('Sharing is on. Enter the address on your phone.');
 }));
 document.addEventListener('click', guarded(async e => {
-  if (e.target.id === 'steamCopy') { await navigator.clipboard.writeText(steamDetail); toast('Copied'); return; }
+  if (e.target.id === 'steamCopy') { await navigator.clipboard.writeText(steamDetail); copied(e.target); return; }
   const c = e.target.closest('[data-copy]');
-  if (c) { await navigator.clipboard.writeText(c.dataset.copy); toast('Copied'); }
+  if (c) { await navigator.clipboard.writeText(c.dataset.copy); copied(c); }
 }));
 $('testBtn').addEventListener('click', guarded(async () => {
   const b = $('testBtn'), r = $('testResult'); b.disabled = true; b.textContent = 'Testing...'; r.className = 'result';
@@ -420,7 +427,7 @@ $('diagBtn').addEventListener('click', guarded(async () => {
   } finally { b.disabled = false; b.textContent = 'Run test'; }
 }));
 $('diagHost').addEventListener('keydown', e => { if (e.key === 'Enter') $('diagBtn').click(); });
-$('diagCopy').addEventListener('click', guarded(async () => { await navigator.clipboard.writeText(diagText); toast('Copied'); }));
+$('diagCopy').addEventListener('click', guarded(async () => { await navigator.clipboard.writeText(diagText); copied($('diagCopy')); }));
 $('diagAction').addEventListener('click', guarded(async e => {
   const b = e.target.closest('[data-diag-state]'); if (!b) return;
   await api('/api/sites', 'POST', { host: diagHostName, state: b.dataset.diagState });
@@ -587,7 +594,7 @@ async function startLogs() {
 $('logSearch').addEventListener('input', renderLogs);
 $('pauseBtn').addEventListener('click', () => { paused = !paused; $('pauseBtn').textContent = paused ? 'Resume' : 'Pause'; renderLogs(); });
 $('clearBtn').addEventListener('click', guarded(async () => { await api('/api/logs/clear', 'POST'); lines = []; renderLogs(); toast('Log cleared'); }));
-$('copyLog').addEventListener('click', guarded(async () => { await navigator.clipboard.writeText(visibleLines().map(l => l.text).join('\n')); toast('Log copied'); }));
+$('copyLog').addEventListener('click', guarded(async () => { await navigator.clipboard.writeText(visibleLines().map(l => l.text).join('\n')); copied($('copyLog')); }));
 
 /* ---------- sites ---------- */
 const sourceBadge = e => e.source === 'learned' ? '<span class="badge learned-n">learned</span>' : e.source === 'you' ? '<span class="badge">you</span>' : '<span class="badge">existing</span>';
