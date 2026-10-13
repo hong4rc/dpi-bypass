@@ -12,7 +12,6 @@ import (
 type Settings struct {
 	LANSharing bool   `json:"lanSharing"`        // share the bypass with other devices on the LAN
 	DPIMode    string `json:"dpiMode,omitempty"` // how unknown sites are handled: "always" or "learn" (empty = learn)
-	Schema     int    `json:"schema,omitempty"`  // version of the data layout the app has migrated this folder to
 }
 
 type Store struct {

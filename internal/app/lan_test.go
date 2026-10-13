@@ -101,24 +101,6 @@ func TestLANSettingSurvivesARestart(t *testing.T) {
 	}
 }
 
-// Earlier versions stored the choice as an empty "lan-sharing.on" file.
-func TestOldMarkerFileMovesIntoSettings(t *testing.T) {
-	dir := t.TempDir()
-	marker := filepath.Join(dir, legacyLANMarker)
-	os.WriteFile(marker, nil, 0o644)
-
-	a := New(dir, "127.0.0.1:0", "test")
-	if !a.LANWanted() {
-		t.Fatal("old marker should turn the setting on")
-	}
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("old marker should be removed after migrating")
-	}
-	if !New(dir, "127.0.0.1:0", "test").LANWanted() {
-		t.Fatal("migrated setting was not saved")
-	}
-}
-
 func TestIdentifyPageComesAndGoesWithSharing(t *testing.T) {
 	a := newLANApp(t, t.TempDir())
 	if len(a.IdentifyURLs()) != 0 {

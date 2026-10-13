@@ -23,16 +23,15 @@ import (
 const SteamURL = "https://store.steampowered.com"
 
 type App struct {
-	Version   string
-	Dir       string // where the exe, logs and blacklist live
-	Addr      string
-	Started   time.Time
-	Policy    *policy.Policy // what is known about each site (NO_BYPASS / NEEDS_BYPASS) and how unknown sites are handled
-	Proxy     *proxy.Proxy
-	Stats     *stats.Store
-	Settings  *settings.Store
-	Migration Migration       // what the data migration at startup found and did
-	LANAddrs  func() []string // addresses to share on: the PC's private LAN addresses unless a test swaps it
+	Version  string
+	Dir      string // where the exe, logs and blacklist live
+	Addr     string
+	Started  time.Time
+	Policy   *policy.Policy // what is known about each site (NO_BYPASS / NEEDS_BYPASS) and how unknown sites are handled
+	Proxy    *proxy.Proxy
+	Stats    *stats.Store
+	Settings *settings.Store
+	LANAddrs func() []string // addresses to share on: the PC's private LAN addresses unless a test swaps it
 
 	mu       sync.Mutex
 	on       bool
@@ -48,13 +47,10 @@ func New(dir, addr, version string) *App {
 	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{})}
 	a.LANAddrs = lanIPs
 	a.Settings = settings.Load(filepath.Join(dir, "settings.json"))
-	a.Migration = migrate(dir, a.Settings) // before the lists are opened: they must see existing files as they are, and a new folder must stay empty
-	a.Migration.log()
 	skip := blacklist.New(filepath.Join(dir, "blacklist.txt"), policy.SkipHeader)
 	bypass := blacklist.New(filepath.Join(dir, "bypass.txt"), policy.BypassHeader)
 	a.Policy = policy.New(skip, bypass, a.Mode)
 	a.Stats = stats.New(filepath.Join(dir, "devices.json"))
-	a.migrateLANMarker()
 	a.Proxy = proxy.New(addr, a.Policy)
 	// A newly learned site is logged by the proxy and shown in the dashboard; it never pops up a notification.
 	a.Proxy.OnLearn = func(string, policy.Decision) {

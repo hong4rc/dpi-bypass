@@ -3,13 +3,11 @@ dpi-info.log
 dpi-debug.log
 blacklist.txt
 settings.json
-device-names.json
-lan-sharing.on
 plans/
 *.exe~
 identify-cert.pem
 devices.json
 bypass.txt
-blacklist.txt.pre-modes.bak
+
 dpi-info.log.old
 dpi-debug.log.old

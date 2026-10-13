@@ -6,8 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -17,9 +15,6 @@ import (
 	"dpi/internal/settings"
 	"dpi/internal/stats"
 )
-
-// legacyLANMarker is how earlier versions remembered that sharing was on.
-const legacyLANMarker = "lan-sharing.on"
 
 // lanIPs returns this PC's private IPv4 addresses on active interfaces,
 // the one used for internet traffic first.
@@ -78,17 +73,6 @@ func (l lanOnly) Accept() (net.Conn, error) {
 func allowedClient(a net.Addr) bool {
 	t, ok := a.(*net.TCPAddr)
 	return ok && (t.IP.IsPrivate() || t.IP.IsLoopback() || t.IP.IsLinkLocalUnicast())
-}
-
-// migrateLANMarker moves the old "lan-sharing.on" marker file into settings.json.
-func (a *App) migrateLANMarker() {
-	marker := filepath.Join(a.Dir, legacyLANMarker)
-	if _, err := os.Stat(marker); err != nil {
-		return
-	}
-	if err := a.Settings.Update(func(s *settings.Settings) { s.LANSharing = true }); err == nil {
-		os.Remove(marker)
-	}
 }
 
 // LANWanted reports whether sharing was left on last time.

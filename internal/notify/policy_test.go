@@ -54,7 +54,7 @@ func TestNotificationsAreOnlyForRealFailures(t *testing.T) {
 	}
 }
 
-// The app package (learning, migration, sharing, modes) must never notify at all.
+// The app package (learning, sharing, modes) must never notify at all.
 func TestTheAppPackageNeverNotifies(t *testing.T) {
 	err := filepath.WalkDir(filepath.Join("..", "app"), func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {

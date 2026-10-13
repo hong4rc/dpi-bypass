@@ -2,7 +2,6 @@ package stats
 
 import (
 	"net"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -289,23 +288,4 @@ func TestIdentityLabelWithoutAModel(t *testing.T) {
 			t.Errorf("%s: %q want %q", name, got, tc.want)
 		}
 	}
-}
-
-// The first version kept only names, in device-names.json.
-func TestOldNamesFileMovesIntoDevicesJSON(t *testing.T) {
-	dir := t.TempDir()
-	legacy := filepath.Join(dir, "device-names.json")
-	os.WriteFile(legacy, []byte(`{"192.168.1.55": "Old name"}`), 0o644)
-
-	path := filepath.Join(dir, "devices.json")
-	if name, _ := reload(t, path, "192.168.1.55"); name != "Old name" {
-		t.Fatalf("legacy name not imported: %q", name)
-	}
-	if _, err := os.Stat(legacy); err == nil {
-		t.Fatal("legacy file should be removed after the move")
-	}
-	if name, _ := reload(t, path, "192.168.1.55"); name != "Old name" {
-		t.Fatalf("name not kept in devices.json: %q", name)
-	}
-	time.Sleep(10 * time.Millisecond)
 }

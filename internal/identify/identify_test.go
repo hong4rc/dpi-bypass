@@ -63,7 +63,7 @@ func send(t *testing.T, c *http.Client, method, url, body string, hdr map[string
 	return resp.StatusCode, string(b)
 }
 
-// What deviceinfo.me showed for a real Shark PAR-A0 running Chrome 154.
+// What a real Shark PAR-A0 running Chrome 154 reports.
 const sharkReport = `{
   "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36",
   "language": "en-GB", "screen": "1080x2400 @2.75", "mobile": true,

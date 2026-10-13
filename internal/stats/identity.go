@@ -3,7 +3,6 @@ package stats
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -34,8 +33,7 @@ type savedDevice struct {
 	Identities []Identity `json:"identities,omitempty"`
 }
 
-// load reads path (devices.json). If it doesn't exist yet but the old
-// device-names.json does, the names are moved over.
+// load reads path (devices.json).
 func (s *Store) load(path string) {
 	if path == "" {
 		return
@@ -48,21 +46,6 @@ func (s *Store) load(path string) {
 			}
 		}
 		return
-	}
-	legacy := filepath.Join(filepath.Dir(path), "device-names.json")
-	b, err := os.ReadFile(legacy)
-	if err != nil {
-		return
-	}
-	names := map[string]string{}
-	if json.Unmarshal(b, &names) != nil {
-		return
-	}
-	for ip, name := range names {
-		s.saved[ip] = &savedDevice{Name: name}
-	}
-	if s.persist() == nil {
-		os.Remove(legacy)
 	}
 }
 

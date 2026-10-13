@@ -43,11 +43,11 @@ For the things that need room to read or edit. Dark Tokyo Night theme, light the
 
 Only this PC can open the dashboard: other devices get a 403, the page must be opened as `127.0.0.1` or `localhost`, and every change needs a header other websites can't send.
 
-**Identify a phone (real model):** Chrome hides the phone model in web traffic, but a page can read it with JavaScript, and only on HTTPS. So with sharing on, the PC also serves a small HTTPS page (`https://<PC-IP>:18443/identify`, with a self-signed certificate). In the dashboard's Devices tab, scan the QR code with the phone (or copy the address). The browser warns the page is not private: tap **Advanced > Proceed**. The page reads the model and OS version (what `deviceinfo.me` shows) and sends them to the PC, and the device appears with its real name, for example `SHARK PAR-A0 · Android 12`. **Is the phone using the proxy?** After reading the model, the page checks. It requests a made-up name that exists nowhere, so the request can only reach the PC if the phone sends its HTTPS traffic through the proxy; the PC reports whether it saw it. If the phone is using the proxy the page says so. If it is not, or the check cannot be done, the page shows the proxy address with a **Copy proxy address** button (the address for the PC address the phone used).
+**Identify a device (real model):** with sharing on, the PC also serves a small HTTPS page, `https://<PC-IP>:18443/identify`. Open it on the phone in Chrome (the Devices tab shows a QR code and the address). The browser warns that the page is not private, because the PC made its own certificate: tap **Advanced > Proceed**. The page sends the phone's model and OS to the PC, so the device shows its real name, for example `SHARK PAR-A0 · Android 12`, and it tells you whether the phone is using the proxy. If it is not, the page shows the proxy address with a **Copy proxy address** button.
 
-**Why the warning, and can it be avoided?** Browsers only give the model to HTTPS pages, and nothing on the phone trusts a certificate the PC made itself, so the warning always appears the first time, with or without the proxy. The certificate is kept in `identify-cert.pem` next to the exe (renewed automatically when it is about to expire or the PC's address changes), so the browser's "proceed anyway" choice keeps matching after the app restarts. If you would rather not see the warning at all, skip this step and rename the device in the dashboard instead. This does **not** change any phone setting: the proxy address is still pasted into the phone's Wi-Fi proxy setting by hand. Safari and Firefox keep the model private, so use Chrome for this step.
+Why the warning: browsers only give the model to HTTPS pages, and nothing trusts a certificate the PC made, so it shows the first time. The certificate is kept in `identify-cert.pem` and renews itself. Skip this step if you prefer and rename the device in the dashboard. No phone setting is changed. Safari and Firefox keep the model private, so use Chrome.
 
-**Device names:** a device is named by you first, then by what it reported on the identify page, then by its hostname if the network knows it, then by what it says it is in its User-Agent (for example `Android 14 · SM-S918B` or `iPhone14,5 · iOS 17.2`). Hover a device name to see the raw User-Agent headers it sent; each distinct header is also written once to `dpi-debug.log` (`device 192.168.1.13 says: ...`). Chrome on Android and Safari hide the exact model in web traffic, so the model only shows when the phone's system or an app sends it (the system fetch of the proxy address often does). Otherwise rename the device once. Phones behind a second router (NAT) share one address and show up as one device with several descriptions.
+**Device names:** your own name first, then what the identify page reported, then the hostname, then what the device says in its User-Agent. Hover a device in the Devices tab for the details. Phones behind a second router share one address and show up as one device.
 
 ## Use on iPhone, Android and other devices
 
@@ -107,29 +107,13 @@ The app is meant to run for a very long time without a restart:
 - **Automatic:** in Always mode the app learns `NO_BYPASS` when the bypass keeps breaking a site that works normally. Check the **Sites** tab. Learn mode (the default) starts from a normal connection and does not touch sites that already work.
 - **Manual:** add the domain as **Never bypass** in the dashboard's Sites tab (or one per line in `blacklist.txt`). A domain also covers its subdomains. Edits to either file apply within 2 seconds, no restart.
 
-## Upgrading from an earlier version (data migration)
-
-On the first start of this version the app migrates its data folder once. It is safe to run again: the result is recorded as `schema` in `settings.json` and a folder at the current version is never touched.
-
-| Before | After |
-|---|---|
-| `blacklist.txt` entries (the "skip list": connect directly) | the same file, **unchanged**, now meaning `NO_BYPASS`. Nothing is rewritten, converted or deleted |
-| no "needs bypass" data existed | `bypass.txt` starts **empty**: nothing is invented, it fills from real evidence or from you |
-| no `dpiMode` | `dpiMode: "learn"`, the default. A mode you already chose is never changed |
-
-- **Backup:** `blacklist.txt` is copied once to `blacklist.txt.pre-modes.bak`. An existing backup is never overwritten.
-- **Ambiguous records:** entries are labelled only by their notes: `auto-skip ...` = learned by the app, `added in dashboard` = you, anything else (no note) = `existing`, origin unknown. Earlier versions pre-filled four Riot/League of Legends domains without a note; on an existing install they are kept as `NO_BYPASS` (dropping them could silently break League of Legends again) and shown as `existing` so you can remove them. A new install is not pre-filled. Lines that are not a usable domain (for example with spaces) are left in the file, reported in the log, and never match anything.
-- **If the migration fails** (for example the backup cannot be written) nothing is changed and it is retried at the next start; the existing skip list keeps working meanwhile. The log line `data migrated to DPI modes: ...` (or `did not finish`) in `dpi-info.log` says what happened.
-- **Roll back:** copy `blacklist.txt.pre-modes.bak` over `blacklist.txt` and delete the `schema` line in `settings.json`. An older version simply reads the unchanged `blacklist.txt` and ignores `bypass.txt` and the new settings.
-
 ## Files (next to the program)
 
 | File | Content |
 |---|---|
 | `blacklist.txt` | sites that never use the bypass (`NO_BYPASS`), also editable in the dashboard |
 | `bypass.txt` | sites that need the bypass (`NEEDS_BYPASS`), also editable in the dashboard |
-| `blacklist.txt.pre-modes.bak` | copy of `blacklist.txt` made once when migrating from an earlier version |
-| `settings.json` | saved choices, for example `{"lanSharing": true, "dpiMode": "learn", "schema": 2}` |
+| `settings.json` | saved choices, for example `{"lanSharing": true, "dpiMode": "learn"}` |
 | `identify-cert.pem` | the identify page's self-signed certificate and key (only for that page; delete it and a new one is made) |
 | `devices.json` | names you gave to devices and what phones reported on the identify page |
 | `dpi-info.log` | start/stop, failures, `AUTO-SKIP`, `AUTO-BYPASS`, `NO REPLY` (recreated on every start; at 5 MB it becomes `dpi-info.log.old` and a new one starts) |
