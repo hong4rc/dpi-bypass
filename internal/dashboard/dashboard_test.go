@@ -350,12 +350,14 @@ func TestDiagnoseReturnsTheReportAndWhatTheAppKnows(t *testing.T) {
 		Mode     string
 		Plan     string
 		BypassOn bool
+		Level    string
+		Text     string
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.Host != "example.com" || len(got.Attempts) != 2 || got.Attempts[0].Name != "direct" || got.Attempts[1].Name != "split" ||
-		got.Verdict == "" || got.Listed != "UNKNOWN" || got.Mode != "learn" || got.Plan == "" || got.BypassOn {
+		got.Verdict == "" || got.Listed != "UNKNOWN" || got.Mode != "learn" || got.Plan == "" || got.BypassOn || got.Level != "bad" || !strings.Contains(got.Text, "Site: example.com") {
 		t.Fatalf("report shape: %s", rec.Body)
 	}
 	if n := a.Policy.Skip.Len() + a.Policy.Bypass.Len(); n != 0 {

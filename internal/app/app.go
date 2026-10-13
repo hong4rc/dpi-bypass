@@ -3,11 +3,13 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -172,17 +174,19 @@ type CheckResult struct {
 // Check opens Steam through the proxy. It goes through the proxy even while the
 // bypass is off for this PC, so the message says which of the two it proved.
 func (a *App) Check() CheckResult {
-	code, err := check(a.Addr, a.checkTarget())
+	began := time.Now()
+	tr, err := check(a.Addr, a.checkTarget())
+	detail := a.checkDetail(tr, err, began)
 	if err != nil {
 		logx.Info.Printf("test FAILED: %v", err)
-		return CheckResult{Message: plainError(err), Detail: err.Error()}
+		return CheckResult{Message: plainError(err), Detail: detail}
 	}
-	logx.Info.Printf("test OK: HTTP %d", code)
+	logx.Info.Printf("test OK: HTTP %d", tr.Status)
 	msg := "Steam works through the bypass."
 	if !a.On() {
 		msg = "Steam works through the bypass, but the bypass is off for this PC. Turn it on to use it."
 	}
-	return CheckResult{OK: true, Message: msg, Detail: fmt.Sprintf("HTTP %d from %s", code, a.checkTarget())}
+	return CheckResult{OK: true, Message: msg, Detail: detail}
 }
 
 // checkTarget is what the connection test opens (a test can point it elsewhere).
@@ -213,11 +217,19 @@ func plainError(err error) string {
 }
 
 // check does an HTTPS request through the proxy; any HTTP response proves the TLS handshake passed.
-func check(proxyAddr, target string) (int, error) {
+func check(proxyAddr, target string) (checkTrace, error) {
+	var tr checkTrace
+	start := time.Now()
+	var tlsStart time.Time
+	trace := &httptrace.ClientTrace{
+		TLSHandshakeStart: func() { tlsStart = time.Now(); tr.TunnelAt = time.Since(start) },
+		TLSHandshakeDone:  func(_ tls.ConnectionState, _ error) { tr.TLS = time.Since(tlsStart) },
+	}
 	pu := &url.URL{Scheme: "http", Host: proxyAddr}
 	c := &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{Proxy: http.ProxyURL(pu), OnProxyConnectResponse: func(_ context.Context, _ *url.URL, _ *http.Request, res *http.Response) error {
+			tr.ConnectCode = res.Status
 			if res.StatusCode == http.StatusOK {
 				return nil
 			}
@@ -227,12 +239,24 @@ func check(proxyAddr, target string) (int, error) {
 		}},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	resp, err := c.Get(target)
+	req, err := http.NewRequest(http.MethodGet, target, nil)
 	if err != nil {
-		return 0, err
+		return tr, err
+	}
+	resp, err := c.Do(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
+	tr.Total = time.Since(start)
+	if err != nil {
+		return tr, err
 	}
 	resp.Body.Close()
-	return resp.StatusCode, nil
+	tr.Status, tr.Proto = resp.StatusCode, resp.Proto
+	if st := resp.TLS; st != nil {
+		tr.TLSVersion = tls.VersionName(st.Version)
+		if len(st.PeerCertificates) > 0 {
+			tr.Subject, tr.Issuer = proxy.CertName(st.PeerCertificates[0].Subject), proxy.CertName(st.PeerCertificates[0].Issuer)
+		}
+	}
+	return tr, nil
 }
 
 // Mode is how unknown sites are handled; an empty or invalid setting means Learn,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"io"
 	"net"
@@ -42,6 +43,7 @@ type Report struct {
 	ResolveError string    `json:"resolveError,omitempty"`
 	Attempts     []Attempt `json:"attempts"`
 	Verdict      string    `json:"verdict"`
+	Level        string    `json:"level"`             // ok, action (a list change is suggested), warn, bad: how the page colours the verdict
 	Suggest      string    `json:"suggest,omitempty"` // "NEEDS_BYPASS", "NO_BYPASS" or empty
 }
 
@@ -75,7 +77,7 @@ func Diagnose(ctx context.Context, host string, env DiagEnv) Report {
 		if err != nil {
 			rep.ResolveError = err.Error()
 		}
-		rep.Verdict = "The name could not be found (DNS problem or no internet)."
+		rep.Verdict, rep.Level = "The name could not be found (DNS problem or no internet).", "bad"
 		return rep
 	}
 	// prefer IPv4: the same address is used for both attempts so they are comparable
@@ -92,7 +94,7 @@ func Diagnose(ctx context.Context, host string, env DiagEnv) Report {
 		private = private || isPrivate(ip.String())
 	}
 	if private {
-		rep.Verdict = "This name points to your own network, so it never uses the bypass."
+		rep.Verdict, rep.Level = "This name points to your own network, so it never uses the bypass.", "ok"
 		return rep
 	}
 
@@ -109,27 +111,27 @@ func Diagnose(ctx context.Context, host string, env DiagEnv) Report {
 	}
 	switch {
 	case ctx.Err() != nil:
-		rep.Verdict = "The test ran out of time. Try again."
+		rep.Verdict, rep.Level = "The test ran out of time. Try again.", "warn"
 	case direct.Result == "ok":
 		switch {
 		case split.Result == "ok":
-			rep.Verdict = "Works without the bypass."
+			rep.Verdict, rep.Level = "Works without the bypass.", "ok"
 		case !confirmed(1) || ctx.Err() != nil:
-			rep.Verdict = "Mixed result: the bypass failed once but worked on the repeat. Try again."
+			rep.Verdict, rep.Level = "Mixed result: the bypass failed once but worked on the repeat. Try again.", "warn"
 		default:
-			rep.Verdict = "The bypass breaks this site."
+			rep.Verdict, rep.Level = "The bypass breaks this site.", "action"
 			rep.Suggest = "NO_BYPASS"
 		}
 	case split.Result == "ok":
 		switch {
 		case !confirmed(0) || ctx.Err() != nil:
-			rep.Verdict = "Mixed result: a normal connection failed once but worked on the repeat. Try again."
+			rep.Verdict, rep.Level = "Mixed result: a normal connection failed once but worked on the repeat. Try again.", "warn"
 		default:
-			rep.Verdict = "This site is blocked; the bypass fixes it."
+			rep.Verdict, rep.Level = "This site is blocked; the bypass fixes it.", "action"
 			rep.Suggest = "NEEDS_BYPASS"
 		}
 	default:
-		rep.Verdict = "Not a block the bypass can fix (site down, IP or DNS blocked)."
+		rep.Verdict, rep.Level = "Not a block the bypass can fix (site down, IP or DNS blocked).", "bad"
 	}
 	return rep
 }
@@ -182,7 +184,7 @@ func tryHandshake(ctx context.Context, env DiagEnv, host, addr string, split boo
 	at.TLSVersion = tls.VersionName(st.Version)
 	if len(st.PeerCertificates) > 0 {
 		c := st.PeerCertificates[0]
-		at.Subject, at.Issuer = c.Subject.String(), c.Issuer.String()
+		at.Subject, at.Issuer = CertName(c.Subject), CertName(c.Issuer)
 	}
 	return at
 }
@@ -209,4 +211,16 @@ func classify(err error) string {
 		return "reset"
 	}
 	return "other"
+}
+
+// CertName is the short name of a certificate subject or issuer: its common
+// name, or the organisation when there is none ("CN=*.example.com,O=Example\, Inc.,..." is unreadable).
+func CertName(n pkix.Name) string {
+	switch {
+	case n.CommonName != "" && len(n.Organization) > 0 && !strings.Contains(n.CommonName, " ") && strings.Contains(n.CommonName, "."):
+		return n.CommonName // a host name: the organisation adds nothing
+	case len(n.Organization) > 0:
+		return n.Organization[0]
+	}
+	return n.CommonName
 }

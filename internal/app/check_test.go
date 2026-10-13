@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dpi/internal/stats"
 )
 
 type timeoutErr struct{}
@@ -49,6 +51,7 @@ func stubProxy(t *testing.T, status int) string {
 func TestCheckSaysWhenTheBypassIsOff(t *testing.T) {
 	a := New(t.TempDir(), stubProxy(t, 200), "test")
 	a.steamURL = "http://steam.example.test/"
+	offline(a)
 
 	got := a.Check() // a.on is false: nothing here touches the system proxy
 	if !got.OK || !strings.Contains(got.Message, "bypass is off for this PC") || got.Detail == "" {
@@ -68,6 +71,7 @@ func TestCheckFailureIsOneSentenceWithTheRawErrorKept(t *testing.T) {
 	ln.Close()
 	a := New(t.TempDir(), dead, "test")
 	a.steamURL = "http://steam.example.test/"
+	offline(a)
 
 	got := a.Check()
 	if got.OK || got.Message != "The proxy did not answer." || !strings.Contains(got.Detail, dead) {
@@ -82,9 +86,40 @@ func TestCheckSurfacesWhyTheProxyCouldNotReachTheSite(t *testing.T) {
 	defer s.Close()
 	a := New(t.TempDir(), s.Listener.Addr().String(), "test")
 	a.steamURL = "https://steam.example.test/"
+	offline(a)
 
 	got := a.Check()
 	if got.OK || !strings.HasPrefix(got.Message, "The name could not be found") || !strings.Contains(got.Detail, "no such host") {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// offline makes the direct comparison fail at once, so no test touches the real network.
+func offline(a *App) {
+	a.DiagEnv.Lookup = func(context.Context, string) ([]net.IP, error) { return nil, errors.New("no such host") }
+}
+
+func TestCheckDetailExplainsWhatHappened(t *testing.T) {
+	a := New(t.TempDir(), stubProxy(t, 200), "test")
+	a.steamURL = "http://steam.example.test/"
+	offline(a)
+
+	d := a.Check().Detail
+	for _, want := range []string{"What was done", "Asked the proxy", "HTTP 200", "On the lists: not listed", "Bypass on this PC: off", "DPI mode: learn", "The same site checked directly", "Name lookup failed"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("detail lacks %q:\n%s", want, d)
+		}
+	}
+}
+
+func TestCheckDetailNamesHowTheProxyConnected(t *testing.T) {
+	a := New(t.TempDir(), stubProxy(t, 200), "test")
+	a.steamURL = "http://steam.example.test/"
+	offline(a)
+	id := a.Stats.Open(stats.Event{Client: "127.0.0.1", Host: "steam.example.test:443", Mode: "auto-bypass"})
+	a.Stats.Close(id, 1, 1, 5, "")
+
+	if d := a.Check().Detail; !strings.Contains(d, "retried with the bypass") {
+		t.Fatalf("mode not described:\n%s", d)
 	}
 }

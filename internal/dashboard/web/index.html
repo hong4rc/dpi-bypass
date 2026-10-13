@@ -130,7 +130,11 @@ pre.detail{margin:8px 0 0;padding:10px 12px;background:var(--s2);color:var(--tex
 .sitetest summary{cursor:pointer;color:var(--dim)}
 .sitetest .testrow{margin-top:10px}
 #diagHost{flex:1;min-width:200px;max-width:340px}
-.verdict{margin-top:12px;font-weight:700}
+.verdict{margin-top:12px;padding:9px 12px;border-radius:10px;font-weight:700}
+.verdict.ok{background:var(--ok-bg);color:var(--green)}
+.verdict.bad{background:var(--bad-bg);color:var(--red)}
+.verdict.action,.verdict.warn{background:var(--warn-bg);color:var(--yellow)}
+.result .btn.small{margin-top:8px}
 .url{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
 .url code{background:var(--s2);border-radius:8px;padding:4px 10px;word-break:break-all;color:var(--cyan,var(--accent))}
 ol{margin:8px 0 0 18px;padding:0;color:var(--dim)}
@@ -213,13 +217,13 @@ footer{color:var(--muted);font-size:12px;text-align:center;padding:12px}
 
       <div class="testrow">
         <button class="btn" id="testBtn">Test Steam connection</button>
-        <span class="muted" id="testHint">opens store.steampowered.com through the bypass</span>
+        <span class="muted" id="testHint">opens store.steampowered.com through the proxy</span>
       </div>
       <div class="result" id="testResult"></div>
 
       <details class="sitetest" id="siteTest">
         <summary>Test a site</summary>
-        <p class="muted">To just check that a site opens, open it in your browser. This is a troubleshooting report: it tries the site with and without the bypass and shows what happened, step by step. It never changes your lists.</p>
+        <p class="muted">To just check that a site opens, use your browser. This report compares a normal connection with the bypass, step by step. It never changes your lists.</p>
         <div class="testrow">
           <input type="text" id="diagHost" placeholder="example.com" aria-label="Site to test" autocomplete="off" spellcheck="false">
           <button class="btn ghost" id="diagBtn">Run test</button>
@@ -386,6 +390,7 @@ $('lanToggle').addEventListener('change', guarded(async e => {
   if (e.target.checked) toast('Sharing is on. Enter the address on your phone.');
 }));
 document.addEventListener('click', guarded(async e => {
+  if (e.target.id === 'steamCopy') { await navigator.clipboard.writeText(steamDetail); toast('Copied'); return; }
   const c = e.target.closest('[data-copy]');
   if (c) { await navigator.clipboard.writeText(c.dataset.copy); toast('Copied'); }
 }));
@@ -393,34 +398,21 @@ $('testBtn').addEventListener('click', guarded(async () => {
   const b = $('testBtn'), r = $('testResult'); b.disabled = true; b.textContent = 'Testing...'; r.className = 'result';
   try {
     const x = await api('/api/test', 'POST');
-    r.innerHTML = esc(x.message) + (x.detail ? '<details><summary>details</summary><pre class="detail">' + esc(x.detail) + '</pre></details>' : '');
+    steamDetail = x.detail || '';
+    r.innerHTML = esc(x.message) + (steamDetail ? '<details><summary>Show details</summary><pre class="detail">' + esc(steamDetail) + '</pre><button class="btn ghost small" id="steamCopy">Copy details</button></details>' : '');
     r.className = 'result ' + (x.ok ? 'ok' : 'bad');
   }
   finally { b.disabled = false; b.textContent = 'Test Steam connection'; }
 }));
 
 /* ---------- test a site: a diagnostic report ---------- */
-let diagText = '', diagHostName = '';
-function diagReport(d) {
-  const L = ['Site: ' + d.host, 'Addresses: ' + (d.ips.length ? d.ips.join(', ') : 'none') + '  (looked up in ' + d.resolveMs + ' ms)'];
-  if (d.resolveError) L.push('Name lookup error: ' + d.resolveError);
-  d.attempts.forEach(a => {
-    L.push('', (a.name === 'split' ? 'With the bypass' : 'Without the bypass') + ': ' + a.result,
-      '  connect ' + a.dialMs + ' ms, handshake ' + a.handshakeMs + ' ms');
-    if (a.tlsVersion) L.push('  ' + a.tlsVersion);
-    if (a.subject) L.push('  certificate: ' + a.subject + ' (issued by ' + a.issuer + ')');
-    if (a.error) L.push('  error: ' + a.error);
-  });
-  L.push('', 'On the lists: ' + ({ NEEDS_BYPASS: 'Needs bypass', NO_BYPASS: 'Never bypass' }[d.listed] || 'not listed'),
-    'DPI mode: ' + d.mode, 'What the app does for this site: ' + d.plan, 'Bypass on this PC: ' + (d.bypassOn ? 'on' : 'off'));
-  return L.join('\n');
-}
+let diagText = '', diagHostName = '', steamDetail = '';
 $('diagBtn').addEventListener('click', guarded(async () => {
   const b = $('diagBtn'); b.disabled = true; b.textContent = 'Testing...'; $('diagOut').hidden = true;
   try {
     const d = await api('/api/diagnose', 'POST', { host: $('diagHost').value });
-    diagText = diagReport(d); diagHostName = d.host;
-    $('diagVerdict').textContent = d.verdict;
+    diagText = d.text; diagHostName = d.host; $('diagHost').value = d.host;
+    $('diagVerdict').textContent = d.verdict; $('diagVerdict').className = 'verdict ' + d.level;
     $('diagDetail').textContent = diagText;
     const label = { NEEDS_BYPASS: 'Add to Needs bypass', NO_BYPASS: 'Add to Never bypass' }[d.suggest];
     $('diagAction').innerHTML = label && d.listed !== d.suggest ? '<button class="btn small" data-diag-state="' + esc(d.suggest) + '">' + esc(label) + '</button>' : '';
