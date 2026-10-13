@@ -76,6 +76,9 @@ func build(a *app.App) {
 	go func() {
 		for {
 			select {
+			case <-a.Changed():
+				render()
+				renderLAN()
 			case <-mToggle.ClickedCh:
 				if a.On() {
 					a.Disable()
@@ -94,7 +97,9 @@ func build(a *app.App) {
 					break
 				}
 				renderLAN()
-				copyText(a.LANURLs()[0]) // silently: the checked menu item is the feedback
+				if urls := a.LANURLs(); len(urls) > 0 {
+					copyText(urls[0]) // silently: the checked menu item is the feedback
+				}
 			case <-mURL.ClickedCh:
 				if urls := a.LANURLs(); len(urls) > 0 {
 					copyText(urls[0])

@@ -155,3 +155,69 @@ func TestIdentifyPageComesAndGoesWithSharing(t *testing.T) {
 		t.Fatal("identify listener still accepting after DisableLAN")
 	}
 }
+
+func TestLANChangesSignalTheTray(t *testing.T) {
+	a := newLANApp(t, t.TempDir())
+	pending := func() int { return len(a.changed) }
+
+	if err := a.EnableLAN(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-a.Changed():
+	default:
+		t.Fatal("EnableLAN did not signal")
+	}
+
+	a.DisableLAN()
+	select {
+	case <-a.Changed():
+	default:
+		t.Fatal("DisableLAN did not signal")
+	}
+
+	// two changes nobody read collapse into one pending signal
+	if err := a.EnableLAN(); err != nil {
+		t.Fatal(err)
+	}
+	a.DisableLAN()
+	if pending() != 1 {
+		t.Fatalf("want 1 pending signal, got %d", pending())
+	}
+}
+
+func TestAddressChangeSignalsTheTray(t *testing.T) {
+	a := newLANApp(t, t.TempDir())
+	if err := a.EnableLAN(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.DisableLAN()
+	<-a.Changed()
+
+	a.LANAddrs = func() []string { return []string{"127.0.0.1", "127.0.0.2"} }
+	a.refreshLAN()
+	select {
+	case <-a.Changed():
+	default:
+		t.Fatal("refreshLAN moving to a new address did not signal")
+	}
+}
+
+func TestFailedAddressChangeStillSignalsTheTray(t *testing.T) {
+	a := newLANApp(t, t.TempDir())
+	if err := a.EnableLAN(); err != nil {
+		t.Fatal(err)
+	}
+	<-a.Changed()
+
+	a.LANAddrs = func() []string { return []string{"192.0.2.1"} } // not this PC's address: cannot bind
+	a.refreshLAN()
+	if a.LANEnabled() {
+		t.Fatal("sharing should have stopped when the new address cannot be used")
+	}
+	select {
+	case <-a.Changed():
+	default:
+		t.Fatal("sharing stopped but the tray was not told")
+	}
+}

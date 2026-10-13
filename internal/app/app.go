@@ -41,10 +41,11 @@ type App struct {
 	lanTried []string       // the addresses the last attempt to share used (nil = none yet)
 	quit     chan struct{}
 	once     sync.Once
+	changed  chan struct{} // one pending "state changed" signal for the tray
 }
 
 func New(dir, addr, version string) *App {
-	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{})}
+	a := &App{Version: version, Dir: dir, Addr: addr, Started: time.Now(), quit: make(chan struct{}), changed: make(chan struct{}, 1)}
 	a.LANAddrs = lanIPs
 	a.Settings = settings.Load(filepath.Join(dir, "settings.json"))
 	skip := blacklist.New(filepath.Join(dir, "blacklist.txt"), policy.SkipHeader)
@@ -96,6 +97,7 @@ func (a *App) Enable() {
 	defer a.mu.Unlock()
 	sysproxy.Set("http://" + a.Addr + "/proxy.pac")
 	a.on = true
+	a.notifyChanged()
 	logx.Info.Printf("bypass ON (%s), mode %s, %d never-bypass and %d needs-bypass sites", a.Addr, a.Mode(), a.Policy.Skip.Len(), a.Policy.Bypass.Len())
 }
 
@@ -105,8 +107,22 @@ func (a *App) Disable() {
 	defer a.mu.Unlock()
 	sysproxy.Restore()
 	a.on = false
+	a.notifyChanged()
 	logx.Info.Println("bypass OFF, proxy settings restored")
 }
+
+// notifyChanged tells the tray the on/off or sharing state changed. It never
+// blocks, and a burst of changes leaves one pending signal.
+func (a *App) notifyChanged() {
+	select {
+	case a.changed <- struct{}{}:
+	default:
+	}
+}
+
+// Changed fires after the bypass or LAN sharing state changes, from anywhere
+// (tray, dashboard, a new LAN address). Single consumer: the tray.
+func (a *App) Changed() <-chan struct{} { return a.changed }
 
 func (a *App) On() bool {
 	a.mu.Lock()

@@ -96,6 +96,7 @@ func (a *App) EnableLAN() error {
 		return err
 	}
 	a.saveLAN(true)
+	a.notifyChanged()
 	logx.Info.Printf("LAN sharing ON, devices can use: %v", a.lanURLs())
 	return nil
 }
@@ -142,6 +143,7 @@ func (a *App) DisableLAN() {
 	defer a.mu.Unlock()
 	a.unbindLAN()
 	a.saveLAN(false)
+	a.notifyChanged()
 	logx.Info.Println("LAN sharing OFF")
 }
 
@@ -161,6 +163,7 @@ func (a *App) refreshLAN() {
 		return
 	}
 	a.unbindLAN()
+	defer a.notifyChanged() // the listeners changed whether or not the rebind works
 	if err := a.bindLAN(); err != nil {
 		logx.Info.Printf("LAN sharing could not follow the address change: %v", err)
 		return
