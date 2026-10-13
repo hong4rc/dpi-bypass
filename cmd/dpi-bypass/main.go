@@ -54,7 +54,11 @@ func main() {
 	// copy must not truncate the running copy's logs.
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		notify.Send("DPI bypass", "Could not start: is it already running? ("+addr+" is busy)")
+		if isRunning(addr) {
+			tray.OpenURL("http://" + addr + "/") // a second launch just shows the running copy
+			return
+		}
+		notify.Send("DPI bypass", "Could not start: port 18080 is used by another program.")
 		os.Exit(1)
 	}
 	exe, _ := os.Executable()

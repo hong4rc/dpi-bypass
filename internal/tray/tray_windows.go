@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 
 	"fyne.io/systray"
 	"golang.org/x/sys/windows"
@@ -19,6 +20,9 @@ import (
 	"dpi/internal/logx"
 	"dpi/internal/notify"
 )
+
+// doubleClickGap is how soon after a tap the next one is ignored.
+const doubleClickGap = 500 * time.Millisecond
 
 var (
 	iconOn  = makeIcon(color.NRGBA{R: 0x2e, G: 0xb8, B: 0x5c, A: 0xff})
@@ -33,7 +37,15 @@ func Run(a *app.App) {
 
 func build(a *app.App) {
 	systray.SetTooltip("DPI bypass " + a.Version)
-	systray.SetOnTapped(func() { openBrowser(a.DashboardURL()) }) // left click
+	// Left click flips the bypass (the icon colour is the feedback); right click opens the menu.
+	var lastTap time.Time
+	systray.SetOnTapped(func() {
+		if time.Since(lastTap) < doubleClickGap { // a double-click must not flip it twice
+			return
+		}
+		lastTap = time.Now()
+		toggle(a)
+	})
 
 	mStatus := systray.AddMenuItem("", "")
 	mStatus.Disable()
@@ -80,11 +92,7 @@ func build(a *app.App) {
 				render()
 				renderLAN()
 			case <-mToggle.ClickedCh:
-				if a.On() {
-					a.Disable()
-				} else {
-					a.Enable()
-				}
+				toggle(a)
 				render()
 			case <-mLAN.ClickedCh:
 				if a.LANEnabled() {
@@ -105,7 +113,7 @@ func build(a *app.App) {
 					copyText(urls[0])
 				}
 			case <-mDash.ClickedCh:
-				openBrowser(a.DashboardURL())
+				OpenURL(a.DashboardURL())
 			case <-mClear.ClickedCh:
 				logx.Clear()
 				logx.Info.Println("log cleared from the tray menu")
@@ -129,8 +137,17 @@ func build(a *app.App) {
 	}()
 }
 
-// openBrowser opens url in the default browser without flashing a console window.
-func openBrowser(url string) {
+// toggle turns the bypass off when it is on and on when it is off.
+func toggle(a *app.App) {
+	if a.On() {
+		a.Disable()
+	} else {
+		a.Enable()
+	}
+}
+
+// OpenURL opens url in the default browser without flashing a console window.
+func OpenURL(url string) {
 	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	cmd.Start()

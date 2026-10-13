@@ -24,8 +24,8 @@ Or build it yourself: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
 
 1. Double-click the exe. A dot appears in the system tray (green when the bypass is on). Nothing pops up.
 2. Open Steam or your browser. Check: https://store.steampowered.com
-3. **Right-click the tray icon** for quick actions: Turn on/off, Share with other devices, Open dashboard, Clear log, Start with Windows, Quit. There are no notifications for normal things (starting, switching something, learning a site): the icon colour, the checkmarks and the dashboard are the feedback. A notification only appears when something really failed, for example when another copy is already running.
-4. **Left-click the tray icon** (or open `http://127.0.0.1:18080/`) for the dashboard.
+3. **Right-click the tray icon** for quick actions: Turn on/off, Share with other devices, Open dashboard, Clear log, Start with Windows, Quit. There are no notifications for normal things (starting, switching something, learning a site): the icon colour, the checkmarks and the dashboard are the feedback. A notification only appears when something really failed, for example when something else is using the port.
+4. **Left-click the tray icon** to turn the bypass on or off. For the dashboard, choose Open dashboard, start the exe a second time, or open `http://127.0.0.1:18080/`.
 
 macOS/Linux: run the binary in a terminal, open the dashboard address it prints, stop with Ctrl+C. On Linux without GNOME, set your system proxy auto-config (PAC) URL to `http://127.0.0.1:18080/proxy.pac` yourself.
 
