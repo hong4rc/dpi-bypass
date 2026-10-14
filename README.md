@@ -11,7 +11,7 @@ Download from [Releases](../../releases). Each download is everything you need: 
 | OS | Download | Run |
 |---|---|---|
 | Windows | `dpi-bypass-windows-amd64.exe` | double-click it. A tray icon appears. Windows may warn because the file is not code-signed: **More info > Run anyway** |
-| macOS | `dpi-bypass-macos-apple-silicon.tar.gz` or `dpi-bypass-macos-intel.tar.gz` | extract, then `./dpi-bypass` in a terminal (experimental). If macOS blocks it: `xattr -d com.apple.quarantine dpi-bypass` |
+| macOS | `brew install hong4rc/tap/dpi-bypass` (recommended), or `dpi-bypass-macos-apple-silicon.tar.gz` / `dpi-bypass-macos-intel.tar.gz` | run `dpi-bypass` in a terminal (experimental). Homebrew avoids the "Apple could not verify" warning. With a manual download, macOS blocks it until you run `xattr -d com.apple.quarantine dpi-bypass` |
 | Linux | `dpi-bypass-linux-amd64.tar.gz` | extract, then `./dpi-bypass` in a terminal (experimental) |
 
 macOS and Linux are `.tar.gz` because a plain downloaded binary loses its "executable" permission; the archive keeps it. `SHA256SUMS.txt` lists the checksums.

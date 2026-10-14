@@ -56,4 +56,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "Windows: download the .exe and double-click it (a tray icon appears; Windows may warn because the file is not code-signed: More info > Run anyway). macOS and Linux: extract the .tar.gz and run ./dpi-bypass in a terminal (experimental; on macOS you may need: xattr -d com.apple.quarantine dpi-bypass). See the README."
+            --notes "Windows: download the .exe and double-click it (a tray icon appears; Windows may warn because the file is not code-signed: More info > Run anyway). macOS: brew install hong4rc/tap/dpi-bypass (avoids the Apple could-not-verify warning), or extract the .tar.gz, run xattr -d com.apple.quarantine dpi-bypass, then ./dpi-bypass in a terminal (experimental). Linux: extract the .tar.gz and run ./dpi-bypass in a terminal (experimental). See the README."
