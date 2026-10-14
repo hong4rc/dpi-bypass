@@ -57,3 +57,61 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes \
             --notes "Windows: download the .exe and double-click it (a tray icon appears; Windows may warn because the file is not code-signed: More info > Run anyway). macOS: brew install hong4rc/tap/dpi-bypass (avoids the Apple could-not-verify warning), or extract the .tar.gz, run xattr -d com.apple.quarantine dpi-bypass, then ./dpi-bypass in a terminal (experimental). Linux: extract the .tar.gz and run ./dpi-bypass in a terminal (experimental). See the README."
+
+  # Opens a pull request on the Homebrew tap that points the formula at this release.
+  # Needs a repository secret TAP_TOKEN: a personal access token that can write
+  # contents and pull requests on hong4rc/homebrew-tap (the default token cannot).
+  tap:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: require the tap token
+        run: |
+          [ -n "$TAP_TOKEN" ] || { echo "::error::secret TAP_TOKEN is not set; the Homebrew formula was not bumped"; exit 1; }
+
+      - name: bump the formula and open a pull request
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          tag=${GITHUB_REF_NAME}
+          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p SHA256SUMS.txt -D "$RUNNER_TEMP"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/hong4rc/homebrew-tap.git" "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          git checkout -B "bump/dpi-bypass-$tag"
+          python3 -I "$GITHUB_WORKSPACE/scripts/bump-formula.py" Formula/dpi-bypass.rb "$tag" "$RUNNER_TEMP/SHA256SUMS.txt"
+          git -c user.name=hong4rc -c user.email=hong4rc@users.noreply.github.com \
+            commit -am "feat: bump dpi-bypass to $tag"
+          git push --force origin "bump/dpi-bypass-$tag"
+          gh pr view "bump/dpi-bypass-$tag" -R hong4rc/homebrew-tap >/dev/null 2>&1 \
+            || gh pr create -R hong4rc/homebrew-tap --base main --head "bump/dpi-bypass-$tag" \
+                 --title "feat: bump dpi-bypass to $tag" \
+                 --body "Points the dpi-bypass formula at $tag. Opened by the dpi-bypass release workflow; the install check ran against this branch before this pull request was opened for review."
+
+  # Installs the release the way a user would, from the bumped formula branch, on a
+  # clean macOS runner, and checks the two things that matter: the binary starts and
+  # carries no quarantine flag (that flag is what triggers the Apple warning).
+  verify-brew:
+    needs: tap
+    runs-on: macos-latest
+    steps:
+      - name: install from the bumped formula
+        run: |
+          tag=${GITHUB_REF_NAME}
+          brew tap hong4rc/tap
+          tapdir=$(brew --repo hong4rc/tap)
+          git -C "$tapdir" fetch origin "bump/dpi-bypass-$tag"
+          git -C "$tapdir" checkout -q FETCH_HEAD
+          brew audit --strict --online hong4rc/tap/dpi-bypass
+          brew install hong4rc/tap/dpi-bypass
+          brew test hong4rc/tap/dpi-bypass
+
+      - name: version matches and no quarantine flag
+        run: |
+          [ "$(dpi-bypass --version)" = "${GITHUB_REF_NAME}" ] || { echo "::error::version is $(dpi-bypass --version), expected ${GITHUB_REF_NAME}"; exit 1; }
+          if xattr -l "$(brew --prefix)/bin/dpi-bypass" | grep -q com.apple.quarantine; then
+            echo "::error::installed binary is quarantined"; exit 1
+          fi
