@@ -16,7 +16,7 @@ Download from [Releases](../../releases). Each download is everything you need: 
 
 macOS and Linux are `.tar.gz` because a plain downloaded binary loses its "executable" permission; the archive keeps it. `SHA256SUMS.txt` lists the checksums.
 
-Its settings, lists and logs are saved next to the program (see "Files" below). If that folder is read-only, they go to your user config folder instead (`%AppData%\dpi-bypass` on Windows), so nothing is silently lost.
+Its settings, lists and logs are saved next to the program (see "Files" below). If that folder is read-only, they go to your user config folder instead (`%AppData%\dpi-bypass` on Windows, `~/Library/Application Support/dpi-bypass` on macOS), so nothing is silently lost. A Homebrew install always uses the user config folder, because `brew upgrade` replaces the folder the program lives in.
 
 Or build it yourself: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
 

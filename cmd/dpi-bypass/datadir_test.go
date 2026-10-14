@@ -45,3 +45,15 @@ func TestWithNowhereBetterTheExeFolderIsKept(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestAnInstallThePackageManagerReplacesKeepsDataInTheConfigFolder(t *testing.T) {
+	cfg := t.TempDir()
+	for _, sub := range []string{"Cellar/dpi-bypass/0.3.1/bin", "DPI Bypass.app/Contents/MacOS"} {
+		exeDir := filepath.Join(t.TempDir(), sub)
+		os.MkdirAll(exeDir, 0o755)
+		want := filepath.Join(cfg, "dpi-bypass")
+		if got := dataDir(exeDir, cfg); got != want {
+			t.Fatalf("%s: got %q, want %q", sub, got, want)
+		}
+	}
+}
