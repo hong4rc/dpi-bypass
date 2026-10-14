@@ -21,11 +21,15 @@ jobs:
           name: dpi-windows
           path: dpi.exe
 
+  # macOS is built on a macOS runner with CGO: the menu bar icon is Cocoa code.
   cross-build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        target: [darwin/amd64, darwin/arm64, linux/amd64]
+        include:
+          - {os: macos-latest, target: darwin/amd64, cgo: "1"}
+          - {os: macos-latest, target: darwin/arm64, cgo: "1"}
+          - {os: ubuntu-latest, target: linux/amd64, cgo: "0"}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -34,8 +38,9 @@ jobs:
           cache: false
       - name: build ${{ matrix.target }}
         run: |
-          export GOOS=${MATRIX_TARGET%/*} GOARCH=${MATRIX_TARGET#*/} CGO_ENABLED=0
+          export GOOS=${MATRIX_TARGET%/*} GOARCH=${MATRIX_TARGET#*/} CGO_ENABLED=$MATRIX_CGO
           go vet ./...
           go build -o /dev/null ./cmd/dpi-bypass
         env:
           MATRIX_TARGET: ${{ matrix.target }}
+          MATRIX_CGO: ${{ matrix.cgo }}
