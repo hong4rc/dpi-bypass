@@ -11,7 +11,7 @@ Download from [Releases](../../releases). Each download is everything you need: 
 | OS | Download | Run |
 |---|---|---|
 | Windows | `dpi-bypass-windows-amd64.exe` | double-click it. A tray icon appears. Windows may warn because the file is not code-signed: **More info > Run anyway** |
-| macOS | `brew install hong4rc/tap/dpi-bypass` (recommended), or `dpi-bypass-macos-apple-silicon.tar.gz` / `dpi-bypass-macos-intel.tar.gz` | run `dpi-bypass` in a terminal (experimental). Homebrew avoids the "Apple could not verify" warning. With a manual download, macOS blocks it until you run `xattr -d com.apple.quarantine dpi-bypass` |
+| macOS | `brew install hong4rc/tap/dpi-bypass` (recommended), or `dpi-bypass-macos-apple-silicon.tar.gz` / `dpi-bypass-macos-intel.tar.gz` | run `dpi-bypass`; a dot appears in the menu bar (experimental). Homebrew avoids the "Apple could not verify" warning. With a manual download, macOS blocks it until you run `xattr -d com.apple.quarantine dpi-bypass` |
 | Linux | `dpi-bypass-linux-amd64.tar.gz` | extract, then `./dpi-bypass` in a terminal (experimental) |
 
 macOS and Linux are `.tar.gz` because a plain downloaded binary loses its "executable" permission; the archive keeps it. `SHA256SUMS.txt` lists the checksums.
@@ -27,7 +27,9 @@ Or build it yourself: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
 3. **Right-click the tray icon** for quick actions: Turn on/off, Share with other devices, Open dashboard, Clear log, Start with Windows, Quit. There are no notifications for normal things (starting, switching something, learning a site): the icon colour, the checkmarks and the dashboard are the feedback. A notification only appears when something really failed, for example when something else is using the port.
 4. **Left-click the tray icon** to turn the bypass on or off. For the dashboard, choose Open dashboard, start the exe a second time, or open `http://127.0.0.1:18080/`.
 
-macOS/Linux: run the binary in a terminal, open the dashboard address it prints, stop with Ctrl+C. On Linux without GNOME, set your system proxy auto-config (PAC) URL to `http://127.0.0.1:18080/proxy.pac` yourself.
+macOS: run `dpi-bypass` in a terminal, or start it at every login with `brew services start dpi-bypass`. A dot appears in the menu bar (green when the bypass is on). **Click it** for the same menu as on Windows (Turn on/off, Share with other devices, Open dashboard, Clear log, Quit). The menu has no "Start with Windows" item: use `brew services` for that.
+
+Linux: run the binary in a terminal, open the dashboard address it prints, stop with Ctrl+C. On Linux without GNOME, set your system proxy auto-config (PAC) URL to `http://127.0.0.1:18080/proxy.pac` yourself.
 
 ## Dashboard
 
@@ -125,7 +127,7 @@ The app is meant to run for a very long time without a restart:
 
 - Only fixes **SNI-based** blocking over HTTPS. Not IP or DNS blocking, not UDP/QUIC.
 - Only apps that honor the system proxy are covered (browsers, Steam client, most launchers).
-- macOS and Linux builds are untested on real machines and have no tray icon.
+- The macOS and Linux builds are experimental. Linux has no tray icon.
 
 ## Develop
 
@@ -135,4 +137,4 @@ just run                # run from source with console output
 go test ./...
 ```
 
-Layout: `cmd/dpi-bypass` (entry), `internal/policy` (modes, decisions, evidence), `internal/proxy` (split, retries, PAC), `internal/dashboard` (web UI + API), `internal/stats` (devices, identities, activity), `internal/identify` (HTTPS identify page), `internal/blacklist`, `internal/settings`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows icon and menu), `internal/autostart`, `internal/app`, `internal/notify`, `internal/logx`.
+Layout: `cmd/dpi-bypass` (entry), `internal/policy` (modes, decisions, evidence), `internal/proxy` (split, retries, PAC), `internal/dashboard` (web UI + API), `internal/stats` (devices, identities, activity), `internal/identify` (HTTPS identify page), `internal/blacklist`, `internal/settings`, `internal/sysproxy` (Windows / macOS / Linux + crash guard), `internal/tray` (Windows tray and macOS menu bar icon and menu), `internal/autostart`, `internal/app`, `internal/notify`, `internal/logx`.

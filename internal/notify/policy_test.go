@@ -16,7 +16,7 @@ import (
 func TestNotificationsAreOnlyForRealFailures(t *testing.T) {
 	allowed := map[string]int{
 		"cmd/dpi-bypass/main.go":        1, // another copy is already running: the app exits, there is no other way to say so
-		"internal/tray/tray_windows.go": 2, // sharing could not be switched on / start with Windows could not be changed
+		"internal/tray/tray.go": 2, // sharing could not be switched on / start at login could not be changed
 	}
 
 	root := filepath.Join("..", "..")

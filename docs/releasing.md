@@ -4,7 +4,7 @@ A release is a `v*` tag pushed to `main`. `.github/workflows/release.yml` does t
 
 ## What the workflow does
 
-1. **release** runs the tests, builds the Windows `.exe` and the macOS and Linux `.tar.gz` archives, writes `SHA256SUMS.txt`, and publishes the GitHub release.
+1. **build-windows-linux** runs the tests and builds the Windows `.exe` and the Linux `.tar.gz` on Linux. **build-macos** builds the two macOS `.tar.gz` archives on a macOS runner with CGO, because the menu bar icon is Cocoa code and cannot be cross-compiled from Linux. **release** then writes `SHA256SUMS.txt` and publishes the GitHub release.
 2. **tap** points `Formula/dpi-bypass.rb` in [hong4rc/homebrew-tap](https://github.com/hong4rc/homebrew-tap) at the new tag, using `scripts/bump-formula.py` and the release checksums, and opens a pull request there.
 3. **verify-brew** installs from that pull request's branch on a clean macOS runner. It runs `brew audit --strict --online`, `brew install`, `brew test`, then checks that `dpi-bypass --version` equals the tag and that the installed binary has no `com.apple.quarantine` attribute (that attribute is what triggers the "Apple could not verify" warning).
 

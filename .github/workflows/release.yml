@@ -7,7 +7,8 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # Windows and Linux need no C compiler, so they build on Linux.
+  build-windows-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,20 +30,71 @@ jobs:
           # so it is published as the bare .exe.
           GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w -X main.version=$v" \
             -o dist/dpi-bypass-windows-amd64.exe ./cmd/dpi-bypass
-          # macOS and Linux binaries are published as .tar.gz: a plain download loses the
-          # executable bit, an archive keeps it. Each holds the binary and the README.
-          pack() { # os arch name
-            d=work/$3; mkdir -p "$d"
-            GOOS=$1 GOARCH=$2 go build -ldflags "-s -w -X main.version=$v" -o "$d/dpi-bypass" ./cmd/dpi-bypass
+          # The Linux binary is published as .tar.gz: a plain download loses the
+          # executable bit, an archive keeps it. It holds the binary and the README.
+          d=work/dpi-bypass-linux-amd64; mkdir -p "$d"
+          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=$v" -o "$d/dpi-bypass" ./cmd/dpi-bypass
+          cp README.md "$d/"
+          chmod 755 "$d/dpi-bypass"
+          tar -C work -czf dist/dpi-bypass-linux-amd64.tar.gz dpi-bypass-linux-amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-linux
+          path: dist/*
+
+  # The macOS menu bar icon is Cocoa code, so the macOS binaries are built with CGO
+  # on a macOS runner (the Intel build is cross-compiled by the same Apple compiler).
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: build and package
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          v=${GITHUB_REF_NAME}
+          mkdir -p dist work
+          pack() { # arch name
+            d=work/$2; mkdir -p "$d"
+            GOOS=darwin GOARCH=$1 go build -ldflags "-s -w -X main.version=$v" -o "$d/dpi-bypass" ./cmd/dpi-bypass
             cp README.md "$d/"
             chmod 755 "$d/dpi-bypass"
-            tar -C work -czf "dist/$3.tar.gz" "$3"
+            tar -C work -czf "dist/$2.tar.gz" "$2"
           }
-          pack darwin arm64 dpi-bypass-macos-apple-silicon
-          pack darwin amd64 dpi-bypass-macos-intel
-          pack linux  amd64 dpi-bypass-linux-amd64
-          (cd dist && sha256sum * > SHA256SUMS.txt)
-          ls -l dist
+          pack arm64 dpi-bypass-macos-apple-silicon
+          pack amd64 dpi-bypass-macos-intel
+
+      - name: the macOS binaries start
+        run: |
+          tar -xzf dist/dpi-bypass-macos-apple-silicon.tar.gz -C "$RUNNER_TEMP"
+          [ "$("$RUNNER_TEMP"/dpi-bypass-macos-apple-silicon/dpi-bypass --version)" = "${GITHUB_REF_NAME}" ]
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: dist/*
+
+  release:
+    needs: [build-windows-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: checksums
+        run: |
+          cd dist
+          sha256sum dpi-bypass-* > SHA256SUMS.txt
+          ls -l
 
       - name: archives keep the executable bit
         run: |
@@ -55,8 +107,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes \
-            --notes "Windows: download the .exe and double-click it (a tray icon appears; Windows may warn because the file is not code-signed: More info > Run anyway). macOS: brew install hong4rc/tap/dpi-bypass (avoids the Apple could-not-verify warning), or extract the .tar.gz, run xattr -d com.apple.quarantine dpi-bypass, then ./dpi-bypass in a terminal (experimental). Linux: extract the .tar.gz and run ./dpi-bypass in a terminal (experimental). See the README."
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes \
+            --notes "Windows: download the .exe and double-click it (a tray icon appears; Windows may warn because the file is not code-signed: More info > Run anyway). macOS: brew install hong4rc/tap/dpi-bypass (a dot appears in the menu bar, and it avoids the Apple could-not-verify warning; brew services start dpi-bypass runs it at login), or extract the .tar.gz, run xattr -d com.apple.quarantine dpi-bypass, then ./dpi-bypass. Linux: extract the .tar.gz and run ./dpi-bypass in a terminal (experimental). See the README."
 
   # Opens a pull request on the Homebrew tap that points the formula at this release.
   # Needs a repository secret TAP_TOKEN: a personal access token that can write

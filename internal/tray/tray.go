@@ -1,19 +1,17 @@
-// Package tray is the Windows system-tray icon. Quick, simple actions live in
-// its menu and never pop up notifications (the icon and checkmarks are the
-// feedback; only real failures notify). Things that need room to read or edit
-// (devices, activity, live logs, skip list, Steam test, phone setup) live in the
-// dashboard it opens.
+//go:build windows || darwin
+
+// Package tray is the system-tray icon on Windows and the menu bar icon on macOS.
+// Quick, simple actions live in its menu and never pop up notifications (the icon
+// and checkmarks are the feedback; only real failures notify). Things that need
+// room to read or edit (devices, activity, live logs, skip list, Steam test, phone
+// setup) live in the dashboard it opens.
 package tray
 
 import (
 	"image/color"
-	"os/exec"
-	"strings"
-	"syscall"
 	"time"
 
 	"fyne.io/systray"
-	"golang.org/x/sys/windows"
 
 	"dpi/internal/app"
 	"dpi/internal/autostart"
@@ -37,15 +35,17 @@ func Run(a *app.App) {
 
 func build(a *app.App) {
 	systray.SetTooltip("DPI bypass " + a.Version)
-	// Left click flips the bypass (the icon colour is the feedback); right click opens the menu.
-	var lastTap time.Time
-	systray.SetOnTapped(func() {
-		if time.Since(lastTap) < doubleClickGap { // a double-click must not flip it twice
-			return
-		}
-		lastTap = time.Now()
-		toggle(a)
-	})
+	if leftClickToggles {
+		// Left click flips the bypass (the icon colour is the feedback); right click opens the menu.
+		var lastTap time.Time
+		systray.SetOnTapped(func() {
+			if time.Since(lastTap) < doubleClickGap { // a double-click must not flip it twice
+				return
+			}
+			lastTap = time.Now()
+			toggle(a)
+		})
+	}
 
 	mStatus := systray.AddMenuItem("", "")
 	mStatus.Disable()
@@ -56,7 +56,10 @@ func build(a *app.App) {
 	systray.AddSeparator()
 	mDash := systray.AddMenuItem("Open dashboard", "Devices, activity, logs, skip list, Steam test")
 	mClear := systray.AddMenuItem("Clear log", "Empty the log files and the dashboard log")
-	mAuto := systray.AddMenuItemCheckbox("Start with Windows", "", autostart.Enabled())
+	var mAuto *systray.MenuItem
+	if autostartLabel != "" {
+		mAuto = systray.AddMenuItemCheckbox(autostartLabel, "", autostart.Enabled())
+	}
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "")
 
@@ -84,6 +87,12 @@ func build(a *app.App) {
 		}
 	}
 	renderLAN()
+
+	// A nil channel never fires, so a platform without the item just never selects it.
+	var autostartClicks <-chan struct{}
+	if mAuto != nil {
+		autostartClicks = mAuto.ClickedCh
+	}
 
 	go func() {
 		for {
@@ -117,9 +126,9 @@ func build(a *app.App) {
 			case <-mClear.ClickedCh:
 				logx.Clear()
 				logx.Info.Println("log cleared from the tray menu")
-			case <-mAuto.ClickedCh:
+			case <-autostartClicks:
 				if err := autostart.Set(!mAuto.Checked()); err != nil {
-					go notify.Send("Cannot change start with Windows", err.Error())
+					go notify.Send("Cannot change "+autostartLabel, err.Error())
 					break
 				}
 				if mAuto.Checked() {
@@ -144,19 +153,4 @@ func toggle(a *app.App) {
 	} else {
 		a.Enable()
 	}
-}
-
-// OpenURL opens url in the default browser without flashing a console window.
-func OpenURL(url string) {
-	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-	cmd.Start()
-}
-
-// copyText puts s on the clipboard using clip.exe (hidden, no console flash).
-func copyText(s string) {
-	cmd := exec.Command("clip")
-	cmd.Stdin = strings.NewReader(s)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-	cmd.Run()
 }
