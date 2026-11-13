@@ -25,6 +25,7 @@ const diagHost = "blocked.example.test"
 type diagServer struct {
 	addr  string
 	roots *x509.CertPool
+	cert  *x509.Certificate
 }
 
 func startDiagServer(t *testing.T, resetDirect, resetSplit bool) *diagServer {
@@ -77,7 +78,7 @@ func startDiagServer(t *testing.T, resetDirect, resetSplit bool) *diagServer {
 			}()
 		}
 	}()
-	return &diagServer{addr: ln.Addr().String(), roots: pool}
+	return &diagServer{addr: ln.Addr().String(), roots: pool, cert: cert}
 }
 
 // replayConn hands the bytes already read back to the TLS server.
@@ -174,5 +175,78 @@ func TestDiagnoseUnknownNameStopsAtDNS(t *testing.T) {
 	rep := Diagnose(context.Background(), "nothing.example.test", env)
 	if len(rep.Attempts) != 0 || rep.ResolveError == "" || !strings.Contains(rep.Verdict, "could not be found") {
 		t.Fatalf("report: %+v", rep)
+	}
+}
+
+// routed sends each address to its own test server; both certificates are trusted.
+func routed(servers map[string]*diagServer, lookup []string, public []string) DiagEnv {
+	pool := x509.NewCertPool()
+	for _, s := range servers {
+		pool.AddCert(s.cert)
+	}
+	ips := func(list []string) []net.IP {
+		var out []net.IP
+		for _, a := range list {
+			out = append(out, net.ParseIP(a))
+		}
+		return out
+	}
+	env := DiagEnv{
+		Lookup: func(context.Context, string) ([]net.IP, error) { return ips(lookup), nil },
+		Dial: func(ctx context.Context, n, addr string) (net.Conn, error) {
+			h, _, _ := net.SplitHostPort(addr)
+			return (&net.Dialer{}).DialContext(ctx, n, servers[h].addr)
+		},
+		RootCAs: pool,
+	}
+	if public != nil {
+		env.Public = func(context.Context, string) []net.IP { return ips(public) }
+	}
+	return env
+}
+
+func TestDiagnoseOneDeadAddressDoesNotHideAWorkingOne(t *testing.T) {
+	dead, ok := startDiagServer(t, true, true), startDiagServer(t, false, false)
+	env := routed(map[string]*diagServer{"203.0.113.7": dead, "203.0.113.8": ok}, []string{"203.0.113.7", "203.0.113.8"}, nil)
+	rep := Diagnose(context.Background(), diagHost, env)
+	if rep.Verdict != "Works without the bypass." || len(rep.Attempts) != 4 {
+		t.Fatalf("verdict %q, %d attempts: %+v", rep.Verdict, len(rep.Attempts), rep.Attempts)
+	}
+	if rep.Attempts[0].IP != "203.0.113.7" || rep.Attempts[2].IP != "203.0.113.8" {
+		t.Fatalf("each attempt must say which address it used: %+v", rep.Attempts)
+	}
+}
+
+func TestDiagnoseBlockOnOneAddressIsFoundEvenIfAnotherWorks(t *testing.T) {
+	blocked, ok := startDiagServer(t, true, false), startDiagServer(t, false, false)
+	env := routed(map[string]*diagServer{"203.0.113.7": ok, "198.51.100.9": blocked}, []string{"203.0.113.7"}, []string{"198.51.100.9"})
+	rep := Diagnose(context.Background(), diagHost, env)
+	if rep.Suggest != "NEEDS_BYPASS" || rep.Level != "action" {
+		t.Fatalf("report: %+v", rep)
+	}
+	last := rep.Attempts[len(rep.Attempts)-1]
+	if last.IP != "198.51.100.9" || last.Source != "public" {
+		t.Fatalf("the public address must be marked as such: %+v", last)
+	}
+}
+
+func TestDiagnoseBlamesTheNetworkDNSWhenOnlyItsAddressesFail(t *testing.T) {
+	dead, ok := startDiagServer(t, true, true), startDiagServer(t, false, false)
+	env := routed(map[string]*diagServer{"203.0.113.7": dead, "198.51.100.9": ok}, []string{"203.0.113.7"}, []string{"198.51.100.9"})
+	rep := Diagnose(context.Background(), diagHost, env)
+	if rep.Level != "bad" || rep.Suggest != "" || !strings.Contains(rep.Verdict, "Change your DNS") {
+		t.Fatalf("report: %+v", rep)
+	}
+	if len(rep.PublicIPs) != 1 || rep.PublicIPs[0] != "198.51.100.9" {
+		t.Fatalf("public addresses missing: %+v", rep.PublicIPs)
+	}
+}
+
+func TestDiagnoseSkipsPublicAddressesThatAreLAN(t *testing.T) {
+	ok := startDiagServer(t, false, false)
+	env := routed(map[string]*diagServer{"203.0.113.7": ok}, []string{"203.0.113.7"}, []string{"192.168.1.5"})
+	rep := Diagnose(context.Background(), diagHost, env) // a LAN address from public DNS is never tried (routed has no server for it)
+	if len(rep.Attempts) != 2 {
+		t.Fatalf("attempts: %+v", rep.Attempts)
 	}
 }

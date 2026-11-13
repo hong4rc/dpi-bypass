@@ -176,17 +176,38 @@ type CheckResult struct {
 func (a *App) Check() CheckResult {
 	began := time.Now()
 	tr, err := check(a.Addr, a.checkTarget())
-	detail := a.checkDetail(tr, err, began)
+	host := a.checkHost()
+	ev, found := a.tunnelSince(host, began)
+	viaDNS := a.Proxy.Resolver.UsedSince(host, began)
+	detail := a.checkDetail(tr, err, ev, found, viaDNS)
 	if err != nil {
 		logx.Info.Printf("test FAILED: %v", err)
 		return CheckResult{Message: plainError(err), Detail: detail}
 	}
 	logx.Info.Printf("test OK: HTTP %d", tr.Status)
-	msg := "Steam works through the bypass."
-	if !a.On() {
-		msg = "Steam works through the bypass, but the bypass is off for this PC. Turn it on to use it."
+	return CheckResult{OK: true, Message: a.okMessage(ev.Mode, found, viaDNS), Detail: detail}
+}
+
+// okMessage says what the passed test proved. Working is not the same as the
+// bypass working: a site that is not blocked, or only blocked in DNS, opens
+// without the bypass doing anything.
+func (a *App) okMessage(mode string, found, viaDNS bool) string {
+	var msg string
+	switch mode {
+	case "bypass", "auto-bypass":
+		msg = "Steam works, and it needed the bypass: the connection was split to get past the block."
+	case "direct", "auto-skip":
+		msg = "Steam works, but not because of the bypass: it connected normally."
+	default:
+		msg = "Steam works through the proxy."
 	}
-	return CheckResult{OK: true, Message: msg, Detail: detail}
+	if viaDNS {
+		msg += " This network's DNS could not find Steam, so the app looked it up another way. That is not the bypass."
+	}
+	if !a.On() {
+		msg += " The bypass is off for this PC. Turn it on to use it."
+	}
+	return msg
 }
 
 // checkTarget is what the connection test opens (a test can point it elsewhere).

@@ -26,12 +26,8 @@ type checkTrace struct {
 // checkDetail is the step-by-step account shown under "details" after the Steam
 // test: what was asked of the proxy and how the proxy reached the site, then
 // the same report "Test a site" gives (normal against bypass, lists, settings).
-func (a *App) checkDetail(tr checkTrace, err error, began time.Time) string {
-	u, _ := url.Parse(a.checkTarget())
-	host := ""
-	if u != nil {
-		host = u.Hostname()
-	}
+func (a *App) checkDetail(tr checkTrace, err error, ev stats.Event, found, viaDNS bool) string {
+	host := a.checkHost()
 	ms := func(d time.Duration) string { return fmt.Sprintf("%d ms", d.Milliseconds()) }
 
 	var b strings.Builder
@@ -40,10 +36,13 @@ func (a *App) checkDetail(tr checkTrace, err error, began time.Time) string {
 	if tr.ConnectCode != "" {
 		fmt.Fprintf(&b, "   The proxy answered: %s, after %s.\n", tr.ConnectCode, ms(tr.TunnelAt))
 	}
-	if ev, ok := a.tunnelSince(host, began); ok {
+	if found {
 		fmt.Fprintf(&b, "2. How the proxy connected to the site: %s.\n", describeMode(ev.Mode))
 	} else {
 		b.WriteString("2. How the proxy connected to the site: not recorded.\n")
+	}
+	if viaDNS {
+		b.WriteString("   This network's DNS could not find the name, so the proxy looked it up through a public DNS. That is not the bypass.\n")
 	}
 	if tr.TLSVersion != "" {
 		fmt.Fprintf(&b, "3. Secure connection: %s in %s. Certificate for %s, issued by %s.\n", tr.TLSVersion, ms(tr.TLS), tr.Subject, tr.Issuer)
@@ -63,6 +62,14 @@ func (a *App) checkDetail(tr checkTrace, err error, began time.Time) string {
 		b.WriteString(a.Diagnose(ctx, host).Text)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// checkHost is the host name the connection test opens.
+func (a *App) checkHost() string {
+	if u, err := url.Parse(a.checkTarget()); err == nil {
+		return u.Hostname()
+	}
+	return ""
 }
 
 // tunnelSince finds the newest tunnel to host that the proxy opened since t.

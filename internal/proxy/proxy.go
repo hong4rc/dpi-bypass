@@ -65,11 +65,17 @@ type Proxy struct {
 
 	// Fallback serves every path other than /proxy.pac (the dashboard).
 	Fallback http.Handler
+
+	// Resolver dials sites; it asks a public resolver over HTTPS when the system cannot find a name.
+	Resolver *Resolver
 }
 
 func New(addr string, pol *policy.Policy) *Proxy {
-	return &Proxy{addr: addr, pol: pol, TLSPorts: map[string]bool{"443": true}}
+	return &Proxy{addr: addr, pol: pol, TLSPorts: map[string]bool{"443": true}, Resolver: defaultResolver}
 }
+
+// defaultResolver is shared with Diagnose so both see the same answers and cache.
+var defaultResolver = NewResolver()
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
@@ -153,7 +159,7 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dpi-bypass proxy check", http.StatusForbidden)
 		return
 	}
-	up, err := net.DialTimeout("tcp", r.Host, dialTimeout)
+	up, err := p.Resolver.DialTimeout(r.Host, dialTimeout)
 	if err != nil {
 		logx.Info.Printf("FAIL dial %s: %v", r.Host, err)
 		p.fail(r, err)
@@ -262,7 +268,7 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 	up.Close()
 
 	logx.Debug.Printf("%s: no usable reply to the %s attempt, trying %s", target, name(plan.First), name(plan.Fallback))
-	up2, err := net.DialTimeout("tcp", target, dialTimeout)
+	up2, err := p.Resolver.DialTimeout(target, dialTimeout)
 	if err != nil {
 		return nil, nil, "", err
 	}

@@ -69,3 +69,29 @@ func TestCertNameIsShortAndReadable(t *testing.T) {
 		}
 	}
 }
+
+func TestReportTextNamesTheAddressAndWhereItCameFrom(t *testing.T) {
+	r := DiagnoseResult{Report: proxy.Report{
+		Host: "example.com", IPs: []string{"203.0.113.9"}, PublicIPs: []string{"198.51.100.4"},
+		Attempts: []proxy.Attempt{
+			{Name: "direct", IP: "203.0.113.9", Result: "timeout"},
+			{Name: "split", IP: "203.0.113.9", Result: "timeout"},
+			{Name: "direct", IP: "198.51.100.4", Source: "public", Result: "ok"},
+			{Name: "split", IP: "198.51.100.4", Source: "public", Result: "ok"},
+		},
+		Verdict: "v", Level: "bad",
+	}}
+	text := r.text()
+	for _, want := range []string{
+		"Addresses from a public DNS: 198.51.100.4",
+		"Normal connection to 203.0.113.9: no reply in time",
+		"With the bypass to 198.51.100.4 (public DNS): worked",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "repeated to confirm") {
+		t.Errorf("a different address is not a repeat:\n%s", text)
+	}
+}

@@ -80,11 +80,17 @@ func (r DiagnoseResult) text() string {
 	} else if len(r.IPs) > 0 {
 		fmt.Fprintf(&b, "Addresses: %s (looked up in %d ms)\n", strings.Join(r.IPs, ", "), r.ResolveMS)
 	}
+	if len(r.PublicIPs) > 0 {
+		fmt.Fprintf(&b, "Addresses from a public DNS: %s\n", strings.Join(r.PublicIPs, ", "))
+	}
+	if r.DNSFallback {
+		b.WriteString("Name lookup: this network's DNS could not find the name, so the app asked a public DNS instead. That is not the bypass.\n")
+	}
 	var cert *proxy.Attempt
 	for i := range r.Attempts {
 		at := &r.Attempts[i]
-		name := map[string]string{"direct": "Normal connection", "split": "With the bypass"}[at.Name]
-		if i >= 2 {
+		name := attemptName(at)
+		if repeated(r.Attempts[:i], at) {
 			name += " (repeated to confirm)"
 		}
 		fmt.Fprintf(&b, "%s: %s (connect %d ms, handshake %d ms)\n", name, plainResult(at.Result), at.DialMS, at.HandshakeMS)
@@ -103,7 +109,7 @@ func (r DiagnoseResult) text() string {
 	var raw []string
 	for _, at := range r.Attempts {
 		if at.Error != "" {
-			raw = append(raw, fmt.Sprintf("- %s: %s", map[string]string{"direct": "Normal connection", "split": "With the bypass"}[at.Name], at.Error))
+			raw = append(raw, fmt.Sprintf("- %s: %s", attemptName(&at), at.Error))
 		}
 	}
 	if len(raw) > 0 {
@@ -112,12 +118,36 @@ func (r DiagnoseResult) text() string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// attemptName labels one handshake: with or without the bypass, to which address, and where that address came from.
+func attemptName(at *proxy.Attempt) string {
+	name := map[string]string{"direct": "Normal connection", "split": "With the bypass"}[at.Name]
+	if at.IP != "" {
+		name += " to " + at.IP
+	}
+	if at.Source == "public" {
+		name += " (public DNS)"
+	}
+	return name
+}
+
+// repeated is true when an attempt of the same kind to the same address was already made.
+func repeated(before []proxy.Attempt, at *proxy.Attempt) bool {
+	for _, b := range before {
+		if b.Name == at.Name && b.IP == at.IP {
+			return true
+		}
+	}
+	return false
+}
+
 func (r DiagnoseResult) nextStep() string {
 	switch {
 	case r.Suggest != "" && r.Suggest == r.Listed:
 		return "Nothing to do: it is already on the " + listName(r.Suggest) + " list."
 	case r.Suggest != "":
 		return "Next step: add it to the " + listName(r.Suggest) + " list."
+	case r.Level == "ok" && r.DNSFallback:
+		return "The bypass is not needed. This network blocks the name in its DNS, and only the app's own lookup gets around that."
 	case r.Level == "ok":
 		return "Nothing to do."
 	case r.Level == "warn":

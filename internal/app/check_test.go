@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"dpi/internal/proxy"
 	"dpi/internal/stats"
 )
 
@@ -60,8 +61,51 @@ func TestCheckSaysWhenTheBypassIsOff(t *testing.T) {
 
 	a.on = true
 	got = a.Check()
-	if !got.OK || got.Message != "Steam works through the bypass." {
+	if !got.OK || got.Message != "Steam works through the proxy." {
 		t.Fatalf("on: %+v", got)
+	}
+}
+
+func TestCheckMessageSeparatesBypassFromDNS(t *testing.T) {
+	a := New(t.TempDir(), "127.0.0.1:1", "test")
+	a.on = true
+	for name, c := range map[string]struct {
+		mode   string
+		viaDNS bool
+		want   []string
+		not    []string
+	}{
+		"split worked":    {"auto-bypass", false, []string{"needed the bypass"}, []string{"DNS"}},
+		"not blocked":     {"direct", false, []string{"not because of the bypass"}, []string{"needed the bypass", "DNS"}},
+		"dns help only":   {"direct", true, []string{"not because of the bypass", "DNS could not find Steam", "not the bypass"}, []string{"needed the bypass"}},
+		"both were used":  {"bypass", true, []string{"needed the bypass", "DNS could not find Steam"}, nil},
+		"nothing on file": {"", false, []string{"through the proxy"}, []string{"needed the bypass"}},
+	} {
+		got := a.okMessage(c.mode, c.mode != "", c.viaDNS)
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: %q lacks %q", name, got, w)
+			}
+		}
+		for _, w := range c.not {
+			if strings.Contains(got, w) {
+				t.Errorf("%s: %q must not contain %q", name, got, w)
+			}
+		}
+	}
+}
+
+func TestDiagnoseTextSaysWhenDNSWasWorkedAround(t *testing.T) {
+	r := DiagnoseResult{Report: proxy.Report{Host: "example.test", IPs: []string{"203.0.113.7"}, Level: "ok", Verdict: "Works without the bypass.", DNSFallback: true}}
+	got := r.text()
+	for _, want := range []string{"public DNS instead. That is not the bypass", "The bypass is not needed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("text lacks %q:\n%s", want, got)
+		}
+	}
+	r.DNSFallback = false
+	if strings.Contains(r.text(), "public DNS") {
+		t.Error("DNS note shown although the system lookup worked")
 	}
 }
 
