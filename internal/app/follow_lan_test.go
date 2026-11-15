@@ -38,13 +38,13 @@ func TestSharingFollowsTheAddressesOfThePC(t *testing.T) {
 		t.Fatal("nothing changed, so the listeners must be left alone")
 	}
 
-	addrs = []string{"127.0.0.2"} // the router gave the PC another address
+	addrs = []string{"::1"} // the router gave the PC another address
 	a.refreshLAN()
 	urls := strings.Join(a.LANURLs(), " ")
-	if !strings.Contains(urls, "127.0.0.2:") || strings.Contains(urls, "127.0.0.1:") {
+	if !strings.Contains(urls, "[::1]:") || strings.Contains(urls, "127.0.0.1:") {
 		t.Fatalf("sharing did not move to the new address: %v", a.LANURLs())
 	}
-	if !strings.Contains(strings.Join(a.IdentifyURLs(), " "), "127.0.0.2:") {
+	if !strings.Contains(strings.Join(a.IdentifyURLs(), " "), "[::1]:") {
 		t.Fatalf("the identify page did not move: %v", a.IdentifyURLs())
 	}
 	if !a.LANWanted() {
