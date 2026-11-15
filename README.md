@@ -18,7 +18,7 @@ macOS and Linux are `.tar.gz` because a plain downloaded binary loses its "execu
 
 Its settings, lists and logs are saved next to the program (see "Files" below). If that folder is read-only, they go to your user config folder instead (`%AppData%\dpi-bypass` on Windows, `~/Library/Application Support/dpi-bypass` on macOS), so nothing is silently lost. A Homebrew install always uses the user config folder, because `brew upgrade` replaces the folder the program lives in.
 
-Or build it yourself: `just build` / `go build -o dpi.exe ./cmd/dpi-bypass`.
+Or build it yourself: `just build` (outputs `dpi.exe` on Windows, `dpi-bypass` on macOS/Linux).
 
 ## Use (Windows)
 
@@ -132,7 +132,7 @@ The app is meant to run for a very long time without a restart:
 ## Develop
 
 ```
-just build              # vet + test + build dpi.exe (tray, no console)
+just build              # vet + test + build for your OS (no console on Windows)
 just run                # run from source with console output
 go test ./...
 ```
