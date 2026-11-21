@@ -209,11 +209,33 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 	end(upN, down+n, nil)
 }
 
+// learn records that worked succeeded where failed did not, as evidence that host
+// is d, and says so once the policy has seen enough to save it.
+func (p *Proxy) learn(host string, d policy.Decision, worked, failed policy.Method) {
+	persisted, err := p.pol.Observe(host, d)
+	switch {
+	case err != nil:
+		logx.Info.Printf("cannot save what was learned about %s: %v", host, err)
+	case persisted:
+		if d == policy.NoBypass {
+			logx.Info.Printf("AUTO-SKIP %s: works only without the bypass, added to the never-bypass list", host)
+		} else {
+			logx.Info.Printf("AUTO-BYPASS %s: needs the bypass, added to the bypass list", host)
+		}
+		if p.OnLearn != nil {
+			p.OnLearn(host, d)
+		}
+	default:
+		logx.Debug.Printf("%s: %s worked after %s failed (%s evidence, not yet persisted)", host, name(worked), name(failed), d)
+	}
+}
+
 // send writes the ClientHello with method m and waits for the server's first
 // bytes. usable is false when nothing came back, or when a split hello was
 // answered with a TLS alert (the server could not reassemble it). A direct
 // hello answered with an alert is a real answer: the server just refused.
-func send(c net.Conn, hello []byte, m policy.Method) (reply []byte, usable bool) {
+// silent is true when nothing came back before the timeout (see readFirst).
+func send(c net.Conn, hello []byte, m policy.Method) (reply []byte, usable, silent bool) {
 	var err error
 	if m == policy.Split {
 		err = writeSplit(c, hello)
@@ -221,10 +243,10 @@ func send(c net.Conn, hello []byte, m policy.Method) (reply []byte, usable bool)
 		_, err = c.Write(hello)
 	}
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
-	reply = readFirst(c)
-	return reply, reply != nil && !(m == policy.Split && isAlert(reply))
+	reply, silent = readFirst(c)
+	return reply, reply != nil && !(m == policy.Split && isAlert(reply)), silent
 }
 
 func name(m policy.Method) string {
@@ -258,21 +280,34 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 		return up, nil, ModeDirect, nil
 	}
 
-	if reply, ok := send(up, hello, plan.First); ok {
+	reply, ok, silent := send(up, hello, plan.First)
+	if ok {
 		p.pol.Succeeded(host, plan) // a working first attempt disproves earlier failures: they were transient
+		if plan.Confirms != policy.Unknown {
+			p.learn(host, plan.Confirms, plan.First, policy.Direct)
+		}
 		if plan.First == policy.Split {
 			return up, reply, ModeBypass, nil
 		}
 		return up, reply, ModeDirect, nil
 	}
 	up.Close()
+	if silent && plan.First == policy.Direct && plan.Learn == policy.NeedsBypass {
+		p.pol.Silent(host)
+	}
+	knownBlocked := plan.Learn == policy.Unknown || plan.Confirms == policy.NeedsBypass // on the bypass list, or went silent directly
+	if silent && plan.First == policy.Split && knownBlocked {
+		// a site that needs the bypass and got no reply to it: a direct hello would get
+		// no reply either, and would only make the network block the site for longer
+		return nil, nil, "", fmt.Errorf("NO REPLY to the bypass (blocked for now, or down); not trying directly")
+	}
 
 	logx.Debug.Printf("%s: no usable reply to the %s attempt, trying %s", target, name(plan.First), name(plan.Fallback))
 	up2, err := p.Resolver.DialTimeout(target, dialTimeout)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	reply, usable := send(up2, hello, plan.Fallback)
+	reply, usable, _ := send(up2, hello, plan.Fallback)
 	switch {
 	case reply == nil:
 		up2.Close()
@@ -290,22 +325,7 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 		mode = ModeBypass
 	}
 	if plan.Learn != policy.Unknown {
-		persisted, err := p.pol.Observe(host, plan.Learn)
-		switch {
-		case err != nil:
-			logx.Info.Printf("cannot save what was learned about %s: %v", host, err)
-		case persisted:
-			if plan.Learn == policy.NoBypass {
-				logx.Info.Printf("AUTO-SKIP %s: works only without the bypass, added to the never-bypass list", host)
-			} else {
-				logx.Info.Printf("AUTO-BYPASS %s: needs the bypass, added to the bypass list", host)
-			}
-			if p.OnLearn != nil {
-				p.OnLearn(host, plan.Learn)
-			}
-		default:
-			logx.Debug.Printf("%s: %s worked after %s failed (%s evidence, not yet persisted)", host, name(plan.Fallback), name(plan.First), plan.Learn)
-		}
+		p.learn(host, plan.Learn, plan.Fallback, plan.First)
 		if plan.Learn == policy.NoBypass {
 			mode = ModeAutoSkip
 		} else {

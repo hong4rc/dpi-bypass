@@ -85,10 +85,14 @@ const (
 
 // Plan is how to connect to a site: what to try first, what to fall back to if
 // that gets no usable reply, and which decision a successful fallback is
-// evidence for (Unknown: it proves nothing and nothing is learned).
+// evidence for (Unknown: it proves nothing and nothing is learned). Confirms is
+// the decision a working first attempt is evidence for, Unknown when it proves
+// nothing; it is set when the first attempt is the bypass because a direct
+// connection to the site recently went unanswered.
 type Plan struct {
 	First, Fallback Method
 	Learn           Decision
+	Confirms        Decision
 }
 
 // Header texts of the two lists.
@@ -124,6 +128,7 @@ type Policy struct {
 
 	mu      sync.Mutex
 	pending map[string]*evidence
+	silent  map[string]time.Time // sites whose direct connection went unanswered, and when
 }
 
 // pendingSweep is how many pending observations trigger removing the expired ones.
@@ -140,7 +145,7 @@ func New(skip, bypass *blacklist.List, mode func() Mode) *Policy {
 	return &Policy{
 		Skip: skip, Bypass: bypass, mode: mode, now: time.Now,
 		Threshold: DefaultThreshold, Window: DefaultWindow,
-		pending: map[string]*evidence{},
+		pending: map[string]*evidence{}, silent: map[string]time.Time{},
 	}
 }
 
@@ -173,9 +178,37 @@ func (p *Policy) PlanFor(host string) Plan {
 		return Plan{First: Split, Fallback: Direct, Learn: Unknown}
 	}
 	if p.Mode() == Learn {
+		if p.wentSilent(host) {
+			// another direct try would only make the network block this site for longer
+			return Plan{First: Split, Fallback: Direct, Learn: NoBypass, Confirms: NeedsBypass}
+		}
 		return Plan{First: Direct, Fallback: Split, Learn: NeedsBypass}
 	}
 	return Plan{First: Split, Fallback: Direct, Learn: NoBypass}
+}
+
+// Silent records that a direct connection to host got no reply at all. DPI that
+// drops a hello often keeps blocking the site for a while afterwards, even to the
+// bypass, so until Window passes the site is tried with the bypass first.
+func (p *Policy) Silent(host string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.now()
+	if len(p.silent) >= pendingSweep {
+		for h, at := range p.silent {
+			if now.Sub(at) > p.Window {
+				delete(p.silent, h)
+			}
+		}
+	}
+	p.silent[host] = now
+}
+
+func (p *Policy) wentSilent(host string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	at, ok := p.silent[host]
+	return ok && p.now().Sub(at) <= p.Window
 }
 
 func key(host string, d Decision) string { return host + "|" + d.String() }
@@ -205,6 +238,9 @@ func (p *Policy) Observe(host string, d Decision) (persisted bool, err error) {
 	if ev == nil || now.Sub(ev.since) > p.Window {
 		ev = &evidence{since: now}
 		p.pending[k] = ev
+	}
+	if d == NoBypass {
+		delete(p.silent, host) // the site works directly: its silence was something else
 	}
 	ev.count++
 	if ev.count < p.Threshold {

@@ -2,7 +2,7 @@
 
 Simple tool to bypass **DPI / SNI blocking** (e.g. **Steam store & community blocked**, "connection reset") with no driver and no admin rights. A lightweight alternative to GoodbyeDPI / zapret for Windows, with experimental macOS and Linux builds. Single binary, written in Go.
 
-It runs a tiny local proxy that splits the TLS ClientHello so your ISP's DPI can't read the site name, and registers itself as the system proxy (PAC file).
+It runs a tiny local proxy that splits the TLS ClientHello so your ISP's DPI can't read the site name, and registers itself as the system proxy (PAC file). The first piece leaves with a hop limit of 1, so it dies at your router and the system resends it a moment later: DPI that puts the two pieces back together sees them in the wrong order and still can't read the name. When your network's DNS hides a site, the proxy looks the name up over HTTPS instead.
 
 ## Install
 
@@ -91,7 +91,8 @@ Both modes read and write the same two lists, which are the only place anything 
 
 - **No spam:** visiting sites that work never writes anything. A site only appears in a list when the app has real evidence, or when you add it. Nothing is pre-filled, so a new install starts with empty lists.
 - **A hiccup is not evidence:** a decision is only written after the same failure-then-fix was seen **twice within 10 minutes**. A normal connection that works in between cancels the pending evidence. The connection itself is served either way; only the permanent note waits. What counts as a failure: no reply, a reset, or a timeout of the first attempt. A TLS alert from a server that gets an unfragmented hello is a real answer (the server refused), not a failure.
-- **A learned decision is not flipped by one contradiction:** for a site known to need the bypass, a failing bypass falls back to a direct connection for that one connection, and the list is left alone. Edit the list in the dashboard if a site really changed.
+- **A learned decision is not flipped by one contradiction:** for a site known to need the bypass, a bypass the server cuts or refuses falls back to a direct connection for that one connection, and the list is left alone. Edit the list in the dashboard if a site really changed.
+- **No direct retries for a blocked site:** some DPI keeps blocking a site for a while (around 15 seconds) after it sees the site's name, even to the bypass. So once a normal connection to a site gets no reply at all, Learn mode uses the bypass first for that site for the next 10 minutes, and a bypass that works then counts as evidence. And when the bypass to a site that needs it gets no reply, the app does not try a normal connection after it: that would get no reply either and only make the block last longer.
 - **Learn mode and the proxy:** every HTTPS request still goes through the proxy in Learn mode, because the proxy has to see a failure to learn from it. It just leaves unknown sites untouched until one fails.
 - Learned sites are shown in the **Sites** tab and written to `dpi-info.log`; they never pop up a notification.
 
@@ -125,7 +126,7 @@ The app is meant to run for a very long time without a restart:
 
 ## Limits
 
-- Only fixes **SNI-based** blocking over HTTPS. Not IP or DNS blocking, not UDP/QUIC.
+- Only fixes **SNI-based** and **DNS-based** blocking over HTTPS. Not IP blocking, not UDP/QUIC.
 - Only apps that honor the system proxy are covered (browsers, Steam client, most launchers).
 - The macOS and Linux builds are experimental. Linux has no tray icon.
 

@@ -418,3 +418,33 @@ func persistTwice(t *testing.T, r *rig, host string, d Decision) {
 		t.Fatalf("%s did not become %v after %d observations", host, d, r.Threshold)
 	}
 }
+
+func TestASilentSiteIsPlannedBypassFirstUntilTheWindowPasses(t *testing.T) {
+	dir := t.TempDir()
+	p := New(blacklist.New(filepath.Join(dir, "s.txt"), SkipHeader), blacklist.New(filepath.Join(dir, "b.txt"), BypassHeader), func() Mode { return Learn })
+	now := time.Now()
+	p.now = func() time.Time { return now }
+
+	p.Silent("example.com")
+	want := Plan{First: Split, Fallback: Direct, Learn: NoBypass, Confirms: NeedsBypass}
+	if got := p.PlanFor("example.com"); got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	if got := p.PlanFor("other.com"); got.First != Direct {
+		t.Fatalf("another site must not be affected: %+v", got)
+	}
+	now = now.Add(p.Window + time.Second)
+	if got := p.PlanFor("example.com"); got.First != Direct {
+		t.Fatalf("after the window the site is tried directly again: %+v", got)
+	}
+}
+
+func TestEvidenceThatASilentSiteWorksDirectlyEndsTheBypassFirstPlan(t *testing.T) {
+	dir := t.TempDir()
+	p := New(blacklist.New(filepath.Join(dir, "s.txt"), SkipHeader), blacklist.New(filepath.Join(dir, "b.txt"), BypassHeader), func() Mode { return Learn })
+	p.Silent("example.com")
+	p.Observe("example.com", NoBypass)
+	if got := p.PlanFor("example.com"); got.First != Direct {
+		t.Fatalf("got %+v, want direct first again", got)
+	}
+}
