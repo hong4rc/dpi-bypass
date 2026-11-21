@@ -14,7 +14,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"dpi/internal/app"
@@ -63,8 +62,13 @@ func main() {
 	}
 	exe, _ := os.Executable()
 	cfg, _ := os.UserConfigDir()
-	dir := dataDir(filepath.Dir(exe), cfg) // next to the exe, or %AppData%\dpi-bypass if that folder is read-only
+	exeDir, linkDir := exeDirs(exe)
+	dir := dataDir(exeDir, cfg) // next to the exe, or %AppData%\dpi-bypass if that folder is read-only
+	moved := adoptData(linkDir, dir)
 	logx.Init(dir)
+	if len(moved) > 0 {
+		logx.Info.Printf("moved %v from %s to %s", moved, linkDir, dir)
+	}
 
 	a := app.New(dir, addr, version)
 	a.Proxy.Fallback = dashboard.New(a) // every path except /proxy.pac
