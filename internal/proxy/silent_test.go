@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"strings"
 	"testing"
 
 	"dpi/internal/policy"
@@ -35,6 +36,51 @@ func TestASiteOnTheBypassListIsNotTriedDirectlyAfterASilentBypass(t *testing.T) 
 	}
 	if d := u.directSeen.Load(); d != 0 {
 		t.Fatalf("%d direct hellos after the bypass got no reply, want none", d)
+	}
+	if s := u.splitSeen.Load(); s != 2 {
+		t.Fatalf("%d split hellos, want the bypass tried once more", s)
+	}
+}
+
+func TestASiteOnTheBypassListLoadsWhenDPIMissesOnlyTheFirstSplit(t *testing.T) {
+	shortTimeouts(t)
+	u := startUpstream(t, func(frag bool, n int) behavior {
+		if frag && n > 0 {
+			return bOK
+		}
+		return bHang
+	})
+	r := newRig(t, policy.Learn, u)
+	r.pol.SetState(host, policy.NeedsBypass, "test")
+
+	if answer, mode := r.visit(host, u); answer != "OK" || mode != ModeBypass {
+		t.Fatalf("got %q (%s), want the second bypass to load the site", answer, mode)
+	}
+	r.wantNothingLearned()
+	if d := u.directSeen.Load(); d != 0 {
+		t.Fatalf("%d direct hellos, want none", d)
+	}
+}
+
+func TestASilentSiteThatLoadsOnTheSecondSplitIsNotLearnedAsNoBypass(t *testing.T) {
+	shortTimeouts(t)
+	u := startUpstream(t, func(frag bool, n int) behavior {
+		if frag && n == 1 { // the first split (after the silent direct hello) works, the next one is missed once
+			return bHang
+		}
+		if frag {
+			return bOK
+		}
+		return bHang
+	})
+	r := newRig(t, policy.Learn, u)
+
+	r.visit(host, u) // direct goes silent, the bypass loads it
+	if answer, _ := r.visit(host, u); answer != "OK" {
+		t.Fatalf("got %q, want the retried bypass to load the site", answer)
+	}
+	if strings.Contains(r.file("blacklist.txt"), host) {
+		t.Fatal("a site that only loads with the bypass must never be put on the never-bypass list")
 	}
 }
 

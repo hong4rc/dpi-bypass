@@ -295,20 +295,26 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 	if silent && plan.First == policy.Direct && plan.Learn == policy.NeedsBypass {
 		p.pol.Silent(host)
 	}
+	fallback, learn := plan.Fallback, plan.Learn
 	knownBlocked := plan.Learn == policy.Unknown || plan.Confirms == policy.NeedsBypass // on the bypass list, or went silent directly
 	if silent && plan.First == policy.Split && knownBlocked {
 		// a site that needs the bypass and got no reply to it: a direct hello would get
-		// no reply either, and would only make the network block the site for longer
-		return nil, nil, "", fmt.Errorf("NO REPLY to the bypass (blocked for now, or down); not trying directly")
+		// no reply either, and would only make the network block the site for longer.
+		// DPI now and then still catches a split, so the bypass gets one more try
+		// instead; it working again proves nothing new.
+		fallback, learn = policy.Split, policy.Unknown
 	}
 
-	logx.Debug.Printf("%s: no usable reply to the %s attempt, trying %s", target, name(plan.First), name(plan.Fallback))
+	logx.Debug.Printf("%s: no usable reply to the %s attempt, trying %s", target, name(plan.First), name(fallback))
 	up2, err := p.Resolver.DialTimeout(target, dialTimeout)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	reply, usable, _ := send(up2, hello, plan.Fallback)
+	reply, usable, _ := send(up2, hello, fallback)
 	switch {
+	case reply == nil && fallback == plan.First:
+		up2.Close()
+		return nil, nil, "", fmt.Errorf("NO REPLY to the bypass, twice (blocked for now, or down); not trying directly")
 	case reply == nil:
 		up2.Close()
 		return nil, nil, "", fmt.Errorf("NO REPLY with or without the bypass (blocked or down)")
@@ -321,12 +327,12 @@ func (p *Proxy) handshake(cl, up net.Conn, target, host string) (net.Conn, []byt
 	}
 
 	mode := ModeDirect
-	if plan.Fallback == policy.Split {
+	if fallback == policy.Split {
 		mode = ModeBypass
 	}
-	if plan.Learn != policy.Unknown {
-		p.learn(host, plan.Learn, plan.Fallback, plan.First)
-		if plan.Learn == policy.NoBypass {
+	if learn != policy.Unknown {
+		p.learn(host, learn, fallback, plan.First)
+		if learn == policy.NoBypass {
 			mode = ModeAutoSkip
 		} else {
 			mode = ModeAutoBypass
